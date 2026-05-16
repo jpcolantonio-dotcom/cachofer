@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CachoFer — Central de Despacho</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Mono', 'Courier New', monospace; background: #f5f2eb; color: #1a1a1a; height: 100vh; overflow: hidden; }
+button:hover { opacity: 0.82; cursor: pointer; }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+input, select, textarea { font-family: inherit; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+@keyframes fadeIn { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const STORAGE_KEY = "cachofer_v2";
+
+const DEMO = {
+  drivers: [
+    { id:"CHF001", name:"Carlos Méndez",  phone:"011-4523-1234", status:"disponible", avatar:"CM" },
+    { id:"CHF002", name:"Roberto Díaz",   phone:"011-4789-5678", status:"disponible", avatar:"RD" },
+    { id:"CHF003", name:"Ana Gómez",      phone:"011-4321-9876", status:"disponible", avatar:"AG" },
+  ],
+  stops: [
+    { id:"S1", address:"Av. Corrientes 1234, CABA",  recipient:"Mariana López",   phone:"011-1111-2222", package:"Caja mediana — Electrónica",    timeLimit:"10:30", priority:"alta",    status:"pendiente" },
+    { id:"S2", address:"Av. Santa Fe 890, CABA",     recipient:"Jorge Fernández", phone:"011-3333-4444", package:"Sobre — Documentos legales",    timeLimit:"12:00", priority:"media",   status:"pendiente" },
+    { id:"S3", address:"Calle Florida 456, CABA",    recipient:"Sofía Ramírez",   phone:"011-5555-6666", package:"Bolsa — Ropa x3 prendas",       timeLimit:"14:00", priority:"baja",    status:"pendiente" },
+    { id:"S4", address:"Av. Rivadavia 2100, CABA",   recipient:"Lucas Torres",    phone:"011-7777-8888", package:"Caja grande — Electrodoméstico", timeLimit:"16:00", priority:"alta",    status:"pendiente" },
+    { id:"S5", address:"Av. Callao 550, CABA",       recipient:"Paula Suárez",    phone:"011-9999-0000", package:"Sobre — Medicamentos urgentes",  timeLimit:"11:00", priority:"urgente", status:"pendiente" },
+  ],
+  assignments: {}
+};
+
+function load() { try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; } }
+function save(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} }
+
+const PC = { urgente:"#e8442a", alta:"#f59e0b", media:"#3b82f6", baja:"#888" };
+
+async function aiOptimize(stops) {
+  const list = stops.map((s,i) => `${i+1}. ${s.address} | ${s.recipient} | Límite: ${s.timeLimit} | Prioridad: ${s.priority} | ${s.package}`).join("\n");
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      model:"claude-sonnet-4-20250514", max_tokens:800,
+      messages:[{ role:"user", content:`Eres optimizador logístico en Buenos Aires. Ordená estas paradas:\n${list}\n\nCriteria: urgente primero, respetá horarios, agrupá zonas cercanas.\n\nResponde SOLO JSON:\n{"optimizedOrder":[1,2,3],"estimatedTotalMinutes":120,"estimatedTotalKm":15.5,"reasoning":"2 oraciones","warnings":[]}` }]
+    })
+  });
+  const d = await res.json();
+  const text = d.content.map(b=>b.text||"").join("");
+  return JSON.parse(text.replace(/```json|```/g,"").trim());
+}
+
+function AddModal({ onClose, onAdd }) {
+  const [f, setF] = useState({ address:"", recipient:"", phone:"", package:"", timeLimit:"12:00", priority:"media" });
+  const s = (k,v) => setF(p=>({...p,[k]:v}));
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#fff",border:"3px solid #1a1a1a",borderRadius:10,padding:28,width:460,maxWidth:"92vw"}}>
+        <div style={{fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",marginBottom:20}}>+ Nueva Parada</div>
+        {[["Dirección","address","Av. Corrientes 1234, CABA"],["Destinatario","recipient","Nombre completo"],["Teléfono","phone","011-xxxx-xxxx"],["Paquete / detalle","package","Caja pequeña — Ropa"]].map(([l,k,p])=>(
+          <div key={k} style={{marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>{l.toUpperCase()}</div>
+            <input style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none"}} placeholder={p} value={f[k]} onChange={e=>s(k,e.target.value)} />
+          </div>
+        ))}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>HORARIO LÍMITE</div>
+            <input type="time" style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none"}} value={f.timeLimit} onChange={e=>s("timeLimit",e.target.value)} />
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>PRIORIDAD</div>
+            <select style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none",background:"#fff"}} value={f.priority} onChange={e=>s("priority",e.target.value)}>
+              {["urgente","alta","media","baja"].map(p=><option key={p} value={p}>{p.toUpperCase()}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <button style={{padding:"9px 18px",borderRadius:5,border:"2px solid #1a1a1a",background:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:12}} onClick={onClose}>Cancelar</button>
+          <button style={{padding:"9px 18px",borderRadius:5,border:"2px solid #1a1a1a",background:"#1a1a1a",color:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:12}} onClick={()=>{if(!f.address||!f.recipient||!f.package)return;onAdd({...f,id:"S"+Date.now(),status:"pendiente"});onClose();}}>Agregar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const init = load() || DEMO;
+  const [drivers, setDrivers] = useState(init.drivers);
+  const [stops, setStops]     = useState(init.stops);
+  const [assign, setAssign]   = useState(init.assignments || {});
+  const [selDrv, setSelDrv]   = useState(null);
+  const [optResult, setOptResult] = useState(null);
+  const [optimizing, setOptimizing] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [toast, setToast]     = useState(null);
+
+  useEffect(()=>{ save({drivers,stops,assignments:assign}); },[drivers,stops,assign]);
+
+  const toast_ = (msg,type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+
+  const drvStops = selDrv ? (assign[selDrv.id]||[]).map(id=>stops.find(s=>s.id===id)).filter(Boolean) : [];
+  const unassigned = stops.filter(s=>!Object.values(assign).flat().includes(s.id));
+  const PO = {urgente:0,alta:1,media:2,baja:3};
+
+  function assignStop(stopId) {
+    if(!selDrv){ toast_("Seleccioná un chofer","err"); return; }
+    setAssign(a=>({...a,[selDrv.id]:[...(a[selDrv.id]||[]),stopId]}));
+  }
+  function unassignStop(stopId) {
+    if(!selDrv) return;
+    setAssign(a=>({...a,[selDrv.id]:(a[selDrv.id]||[]).filter(id=>id!==stopId)}));
+  }
+  async function optimize() {
+    if(!selDrv||drvStops.length<2){ toast_("Asigná al menos 2 paradas","err"); return; }
+    setOptimizing(true); setOptResult(null);
+    try {
+      const r = await aiOptimize(drvStops);
+      const ordered = r.optimizedOrder.map(i=>drvStops[i-1]?.id).filter(Boolean);
+      setAssign(a=>({...a,[selDrv.id]:ordered}));
+      setOptResult(r);
+      toast_("✓ Ruta optimizada","ok");
+    } catch(e) { toast_("Error de IA — verificá conexión","err"); }
+    setOptimizing(false);
+  }
+  function dispatch() {
+    if(!selDrv||drvStops.length===0) return;
+    setDrivers(d=>d.map(dr=>dr.id===selDrv.id?{...dr,status:"en_ruta"}:dr));
+    toast_(`Ruta despachada a ${selDrv.name}`,"ok");
+  }
+
+  const btn = (v,extra={}) => ({padding:"9px 16px",borderRadius:5,border:"2px solid #1a1a1a",fontFamily:"inherit",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:1,...({primary:{background:"#1a1a1a",color:"#fff"},danger:{background:"#e8442a",color:"#fff",border:"2px solid #e8442a"},green:{background:"#16a34a",color:"#fff",border:"2px solid #16a34a"},ghost:{background:"#fff",color:"#1a1a1a"}}[v]||{}), ...extra});
+
+  return (
+    <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
+      {/* HEADER */}
+      <div style={{background:"#1a1a1a",color:"#f5f2eb",height:58,display:"flex",alignItems:"center",padding:"0 24px",gap:12,flexShrink:0,borderBottom:"3px solid #e8442a"}}>
+        <span style={{fontSize:22}}>🚛</span>
+        <span style={{fontWeight:700,fontSize:18,letterSpacing:-0.5}}>CACHO<span style={{color:"#e8442a"}}>FER</span> Central</span>
+        <span style={{fontSize:11,color:"#666",marginLeft:4}}>Sistema de Despacho</span>
+        <span style={{marginLeft:"auto",background:"#e8442a",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 10px",borderRadius:3,letterSpacing:2}}>CENTRAL</span>
+        <span style={{fontSize:11,color:"#555",marginLeft:12}}>{new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})} hs</span>
+      </div>
+
+      {/* BODY */}
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"280px 1fr 320px",overflow:"hidden"}}>
+
+        {/* LEFT — Choferes */}
+        <div style={{borderRight:"2px solid #1a1a1a",background:"#fff",overflowY:"auto"}}>
+          <div style={{padding:"12px 18px",borderBottom:"2px solid #1a1a1a",fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",background:"#f5f2eb"}}>🚘 Choferes</div>
+          {drivers.map(dr=>{
+            const active = selDrv?.id===dr.id;
+            const cnt = (assign[dr.id]||[]).length;
+            return (
+              <div key={dr.id} onClick={()=>setSelDrv(dr)} style={{padding:"13px 18px",borderBottom:"1px solid #eee",cursor:"pointer",background:active?"#1a1a1a":"#fff",color:active?"#f5f2eb":"#1a1a1a"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:34,height:34,borderRadius:5,background:active?"#e8442a":"#1a1a1a",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{dr.name}</div>
+                    <div style={{fontSize:11,color:active?"#aaa":"#888",marginTop:1}}>
+                      <span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dr.status==="en_ruta"?"#16a34a":"#aaa",marginRight:5}}/>
+                      {dr.status==="en_ruta"?"En ruta":"Disponible"} · <span style={{color:"#e8442a"}}>{cnt} paradas</span>
+                    </div>
+                  </div>
+                  {active&&<span style={{fontSize:14}}>→</span>}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{padding:"14px 18px",borderTop:"2px solid #eee",marginTop:4}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:"#888",marginBottom:8}}>RESUMEN HOY</div>
+            {[["Total paradas",stops.length],["Sin asignar",unassigned.length],["Entregadas",stops.filter(s=>s.status==="entregado").length],["Urgentes",stops.filter(s=>s.priority==="urgente").length]].map(([l,v])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:5}}><span style={{color:"#888"}}>{l}</span><span style={{fontWeight:700}}>{v}</span></div>
+            ))}
+          </div>
+        </div>
+
+        {/* CENTER — Paradas */}
+        <div style={{overflowY:"auto",background:"#f5f2eb",padding:20}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",color:"#888"}}>Paradas sin asignar ({unassigned.length})</div>
+            <button style={btn("primary")} onClick={()=>setShowAdd(true)}>+ Agregar</button>
+          </div>
+          {unassigned.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:13,padding:"32px 0"}}>✓ Todas asignadas</div>}
+          {[...unassigned].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>(
+            <div key={s.id} style={{background:"#fff",border:`2px solid ${s.priority==="urgente"?"#e8442a":s.priority==="alta"?"#f59e0b":"#1a1a1a"}`,borderRadius:8,padding:14,marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+                <div>
+                  <span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:PC[s.priority],color:"#fff",display:"inline-block",marginBottom:7,textTransform:"uppercase"}}>{s.priority}</span>
+                  {[["📍 Dirección",s.address],["👤 Receptor",s.recipient],["📦 Paquete",s.package],["⏰ Límite",s.timeLimit+" hs"]].map(([l,v])=>(
+                    <div key={l} style={{fontSize:12,marginBottom:3,display:"flex",gap:5}}><span style={{color:"#888",minWidth:80,flexShrink:0}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
+                  ))}
+                </div>
+                <button style={{...btn("primary"),fontSize:10,padding:"6px 10px",whiteSpace:"nowrap",flexShrink:0}} onClick={()=>assignStop(s.id)}>{selDrv?`→ ${selDrv.avatar}`:"Asignar"}</button>
+              </div>
+            </div>
+          ))}
+
+          {selDrv&&drvStops.length>0&&(
+            <>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",color:"#888",marginTop:24,marginBottom:12}}>Asignadas a {selDrv.name} ({drvStops.length})</div>
+              {drvStops.map((s,i)=>(
+                <div key={s.id} style={{background:"#f0fdf4",border:`2px solid ${s.status==="entregado"?"#16a34a":PC[s.priority]}`,borderRadius:8,padding:14,marginBottom:10,opacity:s.status==="entregado"?0.55:1}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+                    <div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                        <span style={{fontWeight:700,fontSize:14}}>#{i+1}</span>
+                        <span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:PC[s.priority],color:"#fff",textTransform:"uppercase"}}>{s.priority}</span>
+                        {s.status==="entregado"&&<span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:"#16a34a",color:"#fff"}}>✓ ENTREGADO</span>}
+                      </div>
+                      {[["📍",s.address],["👤",s.recipient],["📦",s.package],["⏰",s.timeLimit+" hs"]].map(([l,v])=>(
+                        <div key={l} style={{fontSize:12,marginBottom:3,display:"flex",gap:5}}><span style={{color:"#888",minWidth:20}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
+                      ))}
+                    </div>
+                    <button style={{...btn("ghost"),fontSize:10,padding:"5px 10px"}} onClick={()=>unassignStop(s.id)}>✕</button>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* RIGHT — Optimizador */}
+        <div style={{borderLeft:"2px solid #1a1a1a",background:"#1a1a1a",color:"#f5f2eb",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          <div style={{padding:"12px 18px",borderBottom:"2px solid #2d2d2d",fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",background:"#111",color:"#f5f2eb",flexShrink:0}}>🤖 Optimizador IA</div>
+
+          {!selDrv?(
+            <div style={{padding:24,color:"#444",fontSize:13,textAlign:"center",marginTop:48}}>← Seleccioná un chofer</div>
+          ):(
+            <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"12px 18px",borderBottom:"1px solid #2d2d2d"}}>
+                <div style={{fontSize:11,color:"#666",marginBottom:3}}>Chofer seleccionado</div>
+                <div style={{fontWeight:700,fontSize:15}}>{selDrv.name}</div>
+                <div style={{fontSize:11,color:"#555"}}>{selDrv.id} · {drvStops.length} paradas</div>
+              </div>
+
+              {optResult&&(
+                <div style={{background:"#0f0f0f",border:"1px solid #2d2d2d",borderRadius:6,margin:"14px 16px",padding:14}}>
+                  <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:"#e8442a",marginBottom:10}}>IA — RESULTADO</div>
+                  <div style={{display:"flex",gap:20,marginBottom:10}}>
+                    <div><div style={{fontSize:9,color:"#555"}}>DISTANCIA</div><div style={{fontSize:20,fontWeight:700,color:"#16a34a"}}>{optResult.estimatedTotalKm} km</div></div>
+                    <div><div style={{fontSize:9,color:"#555"}}>TIEMPO</div><div style={{fontSize:20,fontWeight:700,color:"#f59e0b"}}>{optResult.estimatedTotalMinutes} min</div></div>
+                  </div>
+                  <div style={{fontSize:12,color:"#aaa",lineHeight:1.6,marginBottom:8}}>{optResult.reasoning}</div>
+                  {optResult.warnings?.map((w,i)=><div key={i} style={{fontSize:11,color:"#e8442a"}}>⚠ {w}</div>)}
+                </div>
+              )}
+
+              <div style={{flex:1,overflowY:"auto"}}>
+                {drvStops.length===0?(
+                  <div style={{padding:20,color:"#444",fontSize:13,textAlign:"center"}}>Sin paradas asignadas</div>
+                ):drvStops.map((s,i)=>(
+                  <div key={s.id} style={{padding:"12px 18px",borderBottom:"1px solid #1f1f1f",display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <div style={{width:26,height:26,borderRadius:"50%",border:`2px solid ${i===0?"#e8442a":"#333"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:i===0?"#e8442a":"#555",flexShrink:0}}>{i===0?"●":i+1}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:12,marginBottom:3}}>{s.address}</div>
+                      <div style={{fontSize:11,color:"#666"}}>{s.recipient}</div>
+                      <div style={{display:"flex",gap:6,marginTop:4,alignItems:"center"}}>
+                        <span style={{fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:2,background:PC[s.priority],color:"#fff",textTransform:"uppercase"}}>{s.priority}</span>
+                        <span style={{fontSize:10,color:"#555"}}>⏰ {s.timeLimit}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{padding:"14px 16px",borderTop:"1px solid #2d2d2d",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
+                <button style={{padding:"11px",borderRadius:5,border:"2px solid #333",background:"#222",color:"#f5f2eb",fontFamily:"inherit",fontWeight:700,fontSize:11,letterSpacing:1,textTransform:"uppercase",opacity:optimizing?0.5:1}} onClick={optimize} disabled={optimizing||drvStops.length<2}>
+                  {optimizing?"⏳ Optimizando...":"🤖 Optimizar con IA"}
+                </button>
+                <button style={{...btn("danger"),padding:"11px",width:"100%"}} onClick={dispatch} disabled={drvStops.length===0}>🚀 Despachar Ruta</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showAdd&&<AddModal onClose={()=>setShowAdd(false)} onAdd={s=>{setStops(p=>[...p,s]);toast_("Parada agregada","ok");}} />}
+      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#e8442a":"#16a34a",color:"#fff",padding:"11px 22px",borderRadius:6,fontSize:13,fontWeight:600,boxShadow:"0 4px 18px rgba(0,0,0,0.3)",zIndex:200,animation:"fadeIn .2s ease"}}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
