@@ -30,9 +30,19 @@ input,select,textarea{font-family:'Inter',sans-serif}
 const { useState, useEffect, useRef } = React;
 
 /* ── STORAGE ─────────────────────────────────────────────────────────────── */
-const KEY = "cachofer_v3";
-const load = () => { try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch{return null;} };
+const KEY      = "cachofer_v3";
+const HIST_KEY = "cachofer_history"; // historial de rutas por fecha
+
+const load    = () => { try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch{return null;} };
 const persist = s => { try{localStorage.setItem(KEY,JSON.stringify(s));}catch{} };
+
+// Historial: { "2025-01-20": { stops:[...], assignments:{...} }, ... }
+const loadHist  = () => { try{const r=localStorage.getItem(HIST_KEY);return r?JSON.parse(r):{};}catch{return{};} };
+const saveHist  = h => { try{localStorage.setItem(HIST_KEY,JSON.stringify(h));}catch{} };
+
+const todayStr  = () => new Date().toISOString().slice(0,10);
+const fmtDate   = d => { const [y,m,day]=d.split("-"); return `${day}/${m}/${y}`; };
+const dayName   = d => { const days=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"]; return days[new Date(d+"T12:00:00").getDay()]; };
 
 /* ── DEMO DATA ───────────────────────────────────────────────────────────── */
 const DEMO = {
@@ -74,420 +84,360 @@ const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
 const PO  = {urgente:0,alta:1,media:2,baja:3};
 const AVATAR_COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#84cc16"];
 const initials = n => n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
-const nextId = (arr,prefix) => { const nums=arr.map(x=>parseInt(x.id.replace(prefix,""))).filter(n=>!isNaN(n)); return prefix+String((nums.length?Math.max(...nums):0)+1).padStart(3,"0"); };
+const nextId   = (arr,prefix) => { const nums=arr.map(x=>parseInt(x.id.replace(prefix,""))).filter(n=>!isNaN(n)); return prefix+String((nums.length?Math.max(...nums):0)+1).padStart(3,"0"); };
 
-/* ── LOCAL ROUTE OPTIMIZER (sin IA, sin costo) ────────────────────────────
-   Algoritmo: 1) urgente primero  2) respeta horario límite  3) agrupa por
-   zona usando distancia euclidiana entre coords (si existen)
-──────────────────────────────────────────────────────────────────────────── */
-function localOptimize(stops, clients) {
-  const withClient = stops.map(s => {
-    const c = clients.find(x => x.id === s.clientId) || {};
-    return { ...s, _client: c, _timeMinutes: timeToMin(s.timeLimit) };
-  });
+/* ── LOCAL OPTIMIZER ─────────────────────────────────────────────────────── */
+function timeToMin(t){ if(!t)return 999; const[h,m]=t.split(":").map(Number); return h*60+m; }
+function dist(a,b){ return Math.sqrt(Math.pow(a.lat-b.lat,2)+Math.pow(a.lng-b.lng,2)); }
 
-  // Separar urgentes y no urgentes
-  const urgentes   = withClient.filter(s => s.priority === "urgente").sort((a,b) => a._timeMinutes - b._timeMinutes);
-  const altas      = withClient.filter(s => s.priority === "alta").sort((a,b) => a._timeMinutes - b._timeMinutes);
-  const medias     = withClient.filter(s => s.priority === "media").sort((a,b) => a._timeMinutes - b._timeMinutes);
-  const bajas      = withClient.filter(s => s.priority === "baja").sort((a,b) => a._timeMinutes - b._timeMinutes);
-
-  const sorted = [...urgentes, ...altas, ...medias, ...bajas];
-
-  // Nearest-neighbor sobre los grupos respetando el orden de prioridad
-  const result = [];
-  const pool   = [...sorted];
-  while (pool.length) {
-    if (result.length === 0) { result.push(pool.shift()); continue; }
-    const last = result[result.length - 1];
-    // Solo intentar agrupar dentro del mismo nivel de prioridad
-    const samePriority = pool.filter(s => s.priority === last.priority);
-    if (samePriority.length > 0 && last._client.lat && last._client.lng) {
-      let bestIdx = 0, bestDist = Infinity;
-      samePriority.forEach((s, i) => {
-        if (!s._client.lat) return;
-        const d = dist(last._client.lat, last._client.lng, s._client.lat, s._client.lng);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
-      });
-      const chosen = samePriority[bestIdx];
-      pool.splice(pool.indexOf(chosen), 1);
-      result.push(chosen);
-    } else {
-      result.push(pool.shift());
-    }
+function localOptimize(stops,clients){
+  const wc = stops.map(s=>({...s,_c:clients.find(x=>x.id===s.clientId)||{},_t:timeToMin(s.timeLimit)}));
+  const byPrio = [0,1,2,3].map(p=>wc.filter(s=>PO[s.priority]===p).sort((a,b)=>a._t-b._t));
+  const sorted = byPrio.flat();
+  const result=[]; const pool=[...sorted];
+  while(pool.length){
+    if(!result.length){result.push(pool.shift());continue;}
+    const last=result[result.length-1];
+    const same=pool.filter(s=>s.priority===last.priority);
+    if(same.length>0&&last._c.lat){
+      let bi=0,bd=Infinity;
+      same.forEach((s,i)=>{ if(!s._c.lat)return; const d=dist(last._c,s._c); if(d<bd){bd=d;bi=i;} });
+      const ch=same[bi]; pool.splice(pool.indexOf(ch),1); result.push(ch);
+    } else { result.push(pool.shift()); }
   }
-
-  const totalKm = estimateKm(result);
-  const totalMin = Math.round(totalKm * 3.5 + result.length * 5); // ~3.5 min/km + 5 min por parada
-
-  return {
-    orderedIds: result.map(s => s.id),
-    estimatedTotalKm: totalKm,
-    estimatedTotalMinutes: totalMin,
-    reasoning: `Ruta optimizada: urgentes primero respetando horarios, luego se agrupan zonas cercanas. ${result.length} paradas en orden óptimo.`,
-    warnings: checkWarnings(result),
-  };
+  const km=result.reduce((acc,s,i)=>{ if(i===0)return acc; const a=result[i-1]._c,b=s._c; return acc+(a.lat&&b.lat?dist(a,b)*111:2.5); },0);
+  const nowMin=new Date().getHours()*60+new Date().getMinutes();
+  const warnings=result.filter((s,i)=>s._t<nowMin+i*12).map(s=>`${s._c.name||s.id}: límite ${s.timeLimit} en riesgo`);
+  return { orderedIds:result.map(s=>s.id), estimatedTotalKm:Math.round(km*10)/10, estimatedTotalMinutes:Math.round(km*3.5+result.length*5), reasoning:`Urgentes primero, luego por horario agrupando zonas cercanas.`, warnings };
 }
 
-function timeToMin(t) {
-  if (!t) return 999;
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function dist(lat1, lng1, lat2, lng2) {
-  return Math.sqrt(Math.pow(lat1 - lat2, 2) + Math.pow(lng1 - lng2, 2));
-}
-
-function estimateKm(stops) {
-  let km = 0;
-  for (let i = 1; i < stops.length; i++) {
-    const a = stops[i-1]._client, b = stops[i]._client;
-    if (a.lat && b.lat) km += dist(a.lat, a.lng, b.lat, b.lng) * 111;
-    else km += 2.5; // estimación default
-  }
-  return Math.round(km * 10) / 10;
-}
-
-function checkWarnings(stops) {
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const warnings = [];
-  stops.forEach((s, i) => {
-    const travelSoFar = i * 12; // ~12 min por parada estimado
-    const arrivalMin = nowMin + travelSoFar;
-    if (s._timeMinutes < arrivalMin) {
-      warnings.push(`⚠ ${s._client.name || s.id}: límite ${s.timeLimit} podría no cumplirse`);
-    }
-  });
-  return warnings;
-}
-
-/* ── GOOGLE MAPS URL para toda la ruta ───────────────────────────────────── */
-function buildGoogleMapsUrl(stops, clients, origin = "") {
-  const pts = stops.map(s => {
-    const c = clients.find(x => x.id === s.clientId);
-    return c ? encodeURIComponent(c.address) : null;
-  }).filter(Boolean);
-
-  if (pts.length === 0) return null;
-
-  const dest = pts[pts.length - 1];
-  const waypoints = pts.slice(0, -1).join("|");
-  const originParam = origin ? `&origin=${encodeURIComponent(origin)}` : "";
-  return `https://www.google.com/maps/dir/?api=1${originParam}&destination=${dest}&waypoints=${waypoints}&travelmode=driving`;
+/* ── GOOGLE MAPS URL ─────────────────────────────────────────────────────── */
+function buildMapsUrl(stops,clients){
+  const pts=stops.map(s=>{ const c=clients.find(x=>x.id===s.clientId); return c?encodeURIComponent(c.address):null; }).filter(Boolean);
+  if(!pts.length)return null;
+  const dest=pts[pts.length-1];
+  const wp=pts.slice(0,-1).join("|");
+  return `https://www.google.com/maps/dir/?api=1&destination=${dest}&waypoints=${wp}&travelmode=driving`;
 }
 
 /* ── LEAFLET MAP ─────────────────────────────────────────────────────────── */
-function RouteMap({ stops, clients }) {
-  const ref = useRef(null);
-  const mapRef = useRef(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
-    const map = L.map(ref.current, { zoomControl: true }).setView([-34.61, -58.38], 13);
-    mapRef.current = map;
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OSM", maxZoom: 19 }).addTo(map);
-
-    const pts = [];
-    stops.forEach((s, i) => {
-      const c = clients.find(x => x.id === s.clientId);
-      if (!c || !c.lat || !c.lng) return;
-      pts.push([c.lat, c.lng]);
-      const color = PC[s.priority] || "#6366f1";
-      const icon = L.divIcon({
-        className: "",
-        html: `<div style="width:32px;height:32px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif">${i + 1}</div>`,
-        iconSize: [32, 32], iconAnchor: [16, 16]
-      });
-      L.marker([c.lat, c.lng], { icon }).addTo(map)
-        .bindPopup(`<b>#${i + 1} — ${c.name}</b><br><span style="font-size:12px">${c.address}</span><br><span style="color:${color};font-size:11px;font-weight:600">⏰ ${s.timeLimit} · ${s.priority}</span>`);
+function RouteMap({stops,clients}){
+  const ref=useRef(null); const mapRef=useRef(null);
+  useEffect(()=>{
+    if(!ref.current)return;
+    if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+    const map=L.map(ref.current,{zoomControl:true}).setView([-34.61,-58.38],13);
+    mapRef.current=map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OSM",maxZoom:19}).addTo(map);
+    const pts=[];
+    stops.forEach((s,i)=>{
+      const c=clients.find(x=>x.id===s.clientId);
+      if(!c||!c.lat||!c.lng)return;
+      pts.push([c.lat,c.lng]);
+      const icon=L.divIcon({className:"",html:`<div style="width:32px;height:32px;border-radius:50%;background:${PC[s.priority]};color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif">${i+1}</div>`,iconSize:[32,32],iconAnchor:[16,16]});
+      L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<b>#${i+1} — ${c.name}</b><br>${c.address}<br><span style="color:${PC[s.priority]};font-size:11px">⏰ ${s.timeLimit} · ${s.priority}</span>`);
     });
-
-    if (pts.length > 1) {
-      L.polyline(pts, { color: "#6366f1", weight: 3, dashArray: "7,5", opacity: .65 }).addTo(map);
-      map.fitBounds(pts, { padding: [32, 32] });
-    } else if (pts.length === 1) {
-      map.setView(pts[0], 15);
-    }
-    return () => { if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
-  }, [stops, clients]);
-
-  return <div ref={ref} style={{ width: "100%", height: "100%", minHeight: 300, borderRadius: 10 }} />;
+    if(pts.length>1){L.polyline(pts,{color:"#6366f1",weight:3,dashArray:"7,5",opacity:.65}).addTo(map);map.fitBounds(pts,{padding:[32,32]});}
+    else if(pts.length===1)map.setView(pts[0],15);
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[stops,clients]);
+  return <div ref={ref} style={{width:"100%",height:"100%",minHeight:300,borderRadius:10}}/>;
 }
 
 /* ── UI PRIMITIVES ───────────────────────────────────────────────────────── */
-function Modal({ onClose, children, w = 500 }) {
-  return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(3px)" }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: "100%", maxWidth: w, boxShadow: "0 20px 60px rgba(0,0,0,0.13)", animation: "slideUp .22s ease", maxHeight: "90vh", overflowY: "auto" }}>{children}</div>
+function Modal({onClose,children,w=500}){
+  return(
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(3px)"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:28,width:"100%",maxWidth:w,boxShadow:"0 20px 60px rgba(0,0,0,0.13)",animation:"slideUp .22s ease",maxHeight:"90vh",overflowY:"auto"}}>{children}</div>
     </div>
   );
 }
-function MHead({ title, onClose }) {
-  return <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}><h2 style={{ fontSize: 17, fontWeight: 600 }}>{title}</h2><button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer", lineHeight: 1 }}>×</button></div>;
-}
-function Field({ label, children }) {
-  return <div style={{ marginBottom: 14 }}><label style={{ fontSize: 11, fontWeight: 500, color: "#64748b", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: .5 }}>{label}</label>{children}</div>;
-}
-function Inp({ value, onChange, placeholder, type = "text", style = {} }) {
-  return <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", ...style }} />;
-}
-function PTag({ p }) {
-  return <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: PBG[p], color: PC[p], letterSpacing: .3, textTransform: "capitalize" }}>{p}</span>;
-}
-function Btn({ children, onClick, variant = "secondary", disabled = false, style = {} }) {
-  const v = { primary: { background: "#111", color: "#fff", border: "none" }, secondary: { background: "#fff", color: "#64748b", border: "1.5px solid #e2e8f0" }, danger: { background: "#ef4444", color: "#fff", border: "none" }, ghost: { background: "transparent", color: "#64748b", border: "none" } };
-  return <button onClick={onClick} disabled={disabled} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500, opacity: disabled ? .4 : 1, cursor: disabled ? "not-allowed" : "pointer", transition: "all .15s", ...v[variant], ...style }}>{children}</button>;
+function MHead({title,onClose}){return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}><h2 style={{fontSize:17,fontWeight:600}}>{title}</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:22,color:"#94a3b8",cursor:"pointer",lineHeight:1}}>×</button></div>;}
+function Field({label,children}){return <div style={{marginBottom:14}}><label style={{fontSize:11,fontWeight:500,color:"#64748b",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>{label}</label>{children}</div>;}
+function Inp({value,onChange,placeholder,type="text",style={}}){return <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",...style}}/>;}
+function PTag({p}){return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;}
+function Btn({children,onClick,variant="secondary",disabled=false,style={}}){
+  const v={primary:{background:"#111",color:"#fff",border:"none"},secondary:{background:"#fff",color:"#64748b",border:"1.5px solid #e2e8f0"},danger:{background:"#ef4444",color:"#fff",border:"none"},success:{background:"#10b981",color:"#fff",border:"none"},ghost:{background:"transparent",color:"#64748b",border:"none"}};
+  return <button onClick={onClick} disabled={disabled} style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:500,opacity:disabled?.4:1,cursor:disabled?"not-allowed":"pointer",transition:"all .15s",...v[variant],...style}}>{children}</button>;
 }
 
-/* ── MODALS ──────────────────────────────────────────────────────────────── */
-function StopModal({ initial, clients, products, onClose, onSave }) {
-  const [clientId, setClientId] = useState(initial?.clientId || "");
-  const [items, setItems]       = useState(initial?.products || []);
-  const [timeLimit, setTL]      = useState(initial?.timeLimit || "12:00");
-  const [priority, setPrio]     = useState(initial?.priority || "media");
-  const [notes, setNotes]       = useState(initial?.notes || "");
-  const [addProd, setAddProd]   = useState("");
-  const [addQty, setAddQty]     = useState(1);
+/* ── HISTORY MODAL ───────────────────────────────────────────────────────── */
+function HistoryModal({onClose,onLoad,currentDate}){
+  const hist=loadHist();
+  const dates=Object.keys(hist).sort((a,b)=>b.localeCompare(a));
 
-  function addItem() {
-    if (!addProd) return;
-    setItems(it => it.find(i => i.productId === addProd) ? it.map(i => i.productId === addProd ? { ...i, qty: i.qty + addQty } : i) : [...it, { productId: addProd, qty: addQty }]);
-    setAddProd(""); setAddQty(1);
+  return(
+    <Modal onClose={onClose} w={520}>
+      <MHead title="📅 Historial de rutas" onClose={onClose}/>
+      {dates.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,padding:"32px 0"}}>No hay rutas guardadas aún.<br/>Guardá la ruta de hoy con el botón 💾</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {dates.map(date=>{
+          const entry=hist[date];
+          const stopCount=entry.stops?.length||0;
+          const assignCount=Object.values(entry.assignments||{}).flat().length;
+          const deliveredCount=entry.stops?.filter(s=>s.status==="entregado").length||0;
+          const isToday=date===todayStr();
+          const isCurrent=date===currentDate;
+          return(
+            <div key={date} style={{background:isCurrent?"#f0f9ff":"#f8fafc",border:`1.5px solid ${isCurrent?"#bae6fd":"#e2e8f0"}`,borderRadius:12,padding:"14px 16px",display:"flex",alignItems:"center",gap:14}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                  <span style={{fontSize:14,fontWeight:600}}>{dayName(date)} {fmtDate(date)}</span>
+                  {isToday&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#dbeafe",color:"#1d4ed8"}}>HOY</span>}
+                  {isCurrent&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#f0f9ff",color:"#0284c7"}}>CARGADO</span>}
+                </div>
+                <div style={{fontSize:12,color:"#64748b",display:"flex",gap:12}}>
+                  <span>📦 {stopCount} paradas</span>
+                  <span>🚛 {assignCount} asignadas</span>
+                  <span style={{color:"#10b981"}}>✓ {deliveredCount} entregadas</span>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn onClick={()=>{onLoad(date,entry);onClose();}} variant="primary" style={{fontSize:11,padding:"6px 12px"}}>
+                  {isCurrent?"Recargar":"Cargar"}
+                </Btn>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+/* ── STOP MODAL ──────────────────────────────────────────────────────────── */
+function StopModal({initial,clients,products,onClose,onSave}){
+  const [clientId,setClientId]=useState(initial?.clientId||"");
+  const [items,setItems]=useState(initial?.products||[]);
+  const [timeLimit,setTL]=useState(initial?.timeLimit||"12:00");
+  const [priority,setPrio]=useState(initial?.priority||"media");
+  const [notes,setNotes]=useState(initial?.notes||"");
+  const [addProd,setAddProd]=useState(""); const [addQty,setAddQty]=useState(1);
+  function addItem(){
+    if(!addProd)return;
+    setItems(it=>it.find(i=>i.productId===addProd)?it.map(i=>i.productId===addProd?{...i,qty:i.qty+addQty}:i):[...it,{productId:addProd,qty:addQty}]);
+    setAddProd("");setAddQty(1);
   }
-
-  return (
+  return(
     <Modal onClose={onClose} w={540}>
-      <MHead title={initial?.id ? "Editar parada" : "Nueva parada"} onClose={onClose} />
+      <MHead title={initial?.id?"Editar parada":"Nueva parada"} onClose={onClose}/>
       <Field label="Cliente">
-        <select value={clientId} onChange={e => setClientId(e.target.value)} style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", background: "#fff" }}>
+        <select value={clientId} onChange={e=>setClientId(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>
           <option value="">— Seleccioná un cliente —</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.name} — {c.address}</option>)}
+          {clients.map(c=><option key={c.id} value={c.id}>{c.name} — {c.address}</option>)}
         </select>
       </Field>
       <Field label="Productos">
-        <div style={{ border: "1.5px solid #e2e8f0", borderRadius: 8, padding: 10, marginBottom: 8, minHeight: 48 }}>
-          {items.length === 0 && <div style={{ fontSize: 12, color: "#cbd5e1", textAlign: "center", padding: "6px 0" }}>Sin productos</div>}
-          {items.map(item => {
-            const p = products.find(x => x.id === item.productId);
-            return (
-              <div key={item.productId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", background: "#f8fafc", borderRadius: 6, marginBottom: 5 }}>
-                <span style={{ fontSize: 12, fontWeight: 500, flex: 1 }}>{p?.name}</span>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>{p?.unit}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, minWidth: 24, textAlign: "center" }}>×{item.qty}</span>
-                <button onClick={() => setItems(it => it.filter(i => i.productId !== item.productId))} style={{ background: "none", border: "none", color: "#ef4444", fontSize: 15, cursor: "pointer" }}>×</button>
-              </div>
-            );
+        <div style={{border:"1.5px solid #e2e8f0",borderRadius:8,padding:10,marginBottom:8,minHeight:44}}>
+          {items.length===0&&<div style={{fontSize:12,color:"#cbd5e1",textAlign:"center",padding:"4px 0"}}>Sin productos</div>}
+          {items.map(item=>{
+            const p=products.find(x=>x.id===item.productId);
+            return(<div key={item.productId} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 6px",background:"#f8fafc",borderRadius:6,marginBottom:5}}>
+              <span style={{fontSize:12,fontWeight:500,flex:1}}>{p?.name}</span>
+              <span style={{fontSize:11,color:"#94a3b8"}}>{p?.unit}</span>
+              <span style={{fontSize:13,fontWeight:600,minWidth:24,textAlign:"center"}}>×{item.qty}</span>
+              <button onClick={()=>setItems(it=>it.filter(i=>i.productId!==item.productId))} style={{background:"none",border:"none",color:"#ef4444",fontSize:15,cursor:"pointer"}}>×</button>
+            </div>);
           })}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <select value={addProd} onChange={e => setAddProd(e.target.value)} style={{ flex: 1, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", background: "#fff" }}>
+        <div style={{display:"flex",gap:8}}>
+          <select value={addProd} onChange={e=>setAddProd(e.target.value)} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",background:"#fff"}}>
             <option value="">Elegir producto…</option>
-            {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.desc})</option>)}
+            {products.map(p=><option key={p.id} value={p.id}>{p.name} ({p.desc})</option>)}
           </select>
-          <input type="number" min={1} max={99} value={addQty} onChange={e => setAddQty(parseInt(e.target.value) || 1)} style={{ width: 58, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "8px 10px", fontSize: 13, outline: "none", textAlign: "center" }} />
-          <Btn onClick={addItem} variant="primary" style={{ padding: "8px 14px", fontSize: 13 }}>＋</Btn>
+          <input type="number" min={1} max={99} value={addQty} onChange={e=>setAddQty(parseInt(e.target.value)||1)} style={{width:58,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",textAlign:"center"}}/>
+          <Btn onClick={addItem} variant="primary" style={{padding:"8px 14px",fontSize:13}}>＋</Btn>
         </div>
       </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Horario límite"><input type="time" value={timeLimit} onChange={e => setTL(e.target.value)} style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none" }} /></Field>
-        <Field label="Prioridad">
-          <select value={priority} onChange={e => setPrio(e.target.value)} style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", background: "#fff" }}>
-            {["urgente", "alta", "media", "baja"].map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
-          </select>
-        </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Horario límite"><input type="time" value={timeLimit} onChange={e=>setTL(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/></Field>
+        <Field label="Prioridad"><select value={priority} onChange={e=>setPrio(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>{["urgente","alta","media","baja"].map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}</select></Field>
       </div>
-      <Field label="Notas"><textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Timbre roto, dejar con portero…" style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", resize: "none", height: 66 }} /></Field>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+      <Field label="Notas"><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Timbre roto, dejar con portero…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
         <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn onClick={() => { if (!clientId || items.length === 0) return; onSave({ id: initial?.id || "ST" + Date.now(), clientId, products: items, timeLimit, priority, notes, status: initial?.status || "pendiente" }); onClose(); }} variant="primary" disabled={!clientId || items.length === 0}>{initial?.id ? "Guardar" : "Agregar parada"}</Btn>
+        <Btn onClick={()=>{if(!clientId||items.length===0)return;onSave({id:initial?.id||"ST"+Date.now(),clientId,products:items,timeLimit,priority,notes,status:initial?.status||"pendiente"});onClose();}} variant="primary" disabled={!clientId||items.length===0}>{initial?.id?"Guardar":"Agregar parada"}</Btn>
       </div>
     </Modal>
   );
 }
 
-function ClientModal({ initial, onClose, onSave }) {
-  const [f, setF] = useState(initial || { name: "", address: "", phone: "", notes: "", lat: "", lng: "" });
-  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
-  return (
+function ClientModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",address:"",phone:"",notes:"",lat:"",lng:""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
     <Modal onClose={onClose} w={460}>
-      <MHead title={initial?.id ? "Editar cliente" : "Nuevo cliente"} onClose={onClose} />
-      <Field label="Nombre"><Inp value={f.name} onChange={e => s("name", e.target.value)} placeholder="Nombre o razón social" /></Field>
-      <Field label="Dirección"><Inp value={f.address} onChange={e => s("address", e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires" /></Field>
-      <Field label="Teléfono"><Inp value={f.phone} onChange={e => s("phone", e.target.value)} type="tel" placeholder="011-xxxx-xxxx" /></Field>
-      <Field label="Notas"><textarea value={f.notes} onChange={e => s("notes", e.target.value)} placeholder="Timbre, horarios, referencias…" style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", resize: "none", height: 66 }} /></Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Latitud"><Inp value={f.lat || ""} onChange={e => s("lat", e.target.value)} placeholder="-34.6037" /></Field>
-        <Field label="Longitud"><Inp value={f.lng || ""} onChange={e => s("lng", e.target.value)} placeholder="-58.3816" /></Field>
+      <MHead title={initial?.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Nombre o razón social"/></Field>
+      <Field label="Dirección"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires"/></Field>
+      <Field label="Teléfono"><Inp value={f.phone} onChange={e=>s("phone",e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
+      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-34.6037"/></Field>
+        <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-58.3816"/></Field>
       </div>
-      <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16, marginTop: -8 }}>Coordenadas opcionales para mostrar en el mapa. Buscalas en Google Maps.</div>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>Coordenadas opcionales para el mapa. Buscalas en Google Maps.</div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
         <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn onClick={() => { if (!f.name || !f.address) return; onSave({ ...f, id: initial?.id || "CL" + Date.now(), lat: parseFloat(f.lat) || null, lng: parseFloat(f.lng) || null }); onClose(); }} variant="primary" disabled={!f.name || !f.address}>{initial?.id ? "Guardar" : "Crear cliente"}</Btn>
+        <Btn onClick={()=>{if(!f.name||!f.address)return;onSave({...f,id:initial?.id||"CL"+Date.now(),lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.name||!f.address}>{initial?.id?"Guardar":"Crear cliente"}</Btn>
       </div>
     </Modal>
   );
 }
 
-function ProductModal({ initial, onClose, onSave }) {
-  const [f, setF] = useState(initial || { name: "", desc: "", unit: "unidad" });
-  const s = (k, v) => setF(p => ({ ...p, [k]: v }));
-  return (
+function ProductModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",desc:"",unit:"unidad"});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
     <Modal onClose={onClose} w={400}>
-      <MHead title={initial?.id ? "Editar producto" : "Nuevo producto"} onClose={onClose} />
-      <Field label="Nombre"><Inp value={f.name} onChange={e => s("name", e.target.value)} placeholder="Ej: Caja mediana" /></Field>
-      <Field label="Descripción"><Inp value={f.desc} onChange={e => s("desc", e.target.value)} placeholder="Ej: 5–15kg" /></Field>
-      <Field label="Unidad">
-        <select value={f.unit} onChange={e => s("unit", e.target.value)} style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "9px 12px", fontSize: 14, outline: "none", background: "#fff" }}>
-          {["unidad", "paquete", "pallet", "kg", "litro", "caja"].map(u => <option key={u}>{u}</option>)}
-        </select>
-      </Field>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+      <MHead title={initial?.id?"Editar producto":"Nuevo producto"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Caja mediana"/></Field>
+      <Field label="Descripción"><Inp value={f.desc} onChange={e=>s("desc",e.target.value)} placeholder="Ej: 5–15kg"/></Field>
+      <Field label="Unidad"><select value={f.unit} onChange={e=>s("unit",e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>{["unidad","paquete","pallet","kg","litro","caja"].map(u=><option key={u}>{u}</option>)}</select></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
         <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn onClick={() => { if (!f.name) return; onSave({ ...f, id: initial?.id || "PR" + Date.now() }); onClose(); }} variant="primary" disabled={!f.name}>{initial?.id ? "Guardar" : "Crear producto"}</Btn>
+        <Btn onClick={()=>{if(!f.name)return;onSave({...f,id:initial?.id||"PR"+Date.now()});onClose();}} variant="primary" disabled={!f.name}>{initial?.id?"Guardar":"Crear producto"}</Btn>
       </div>
     </Modal>
   );
 }
 
-function DriverModal({ initial, allDrivers, onClose, onSave }) {
-  const [name, setName]   = useState(initial?.name || "");
-  const [phone, setPhone] = useState(initial?.phone || "");
-  const [color, setColor] = useState(initial?.color || AVATAR_COLORS[0]);
-  const [err, setErr]     = useState("");
-  return (
+function DriverModal({initial,allDrivers,onClose,onSave}){
+  const [name,setName]=useState(initial?.name||"");
+  const [phone,setPhone]=useState(initial?.phone||"");
+  const [color,setColor]=useState(initial?.color||AVATAR_COLORS[0]);
+  const [err,setErr]=useState("");
+  return(
     <Modal onClose={onClose} w={400}>
-      <MHead title={initial ? "Editar chofer" : "Nuevo chofer"} onClose={onClose} />
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-        <div style={{ width: 60, height: 60, borderRadius: 14, background: color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 22, fontWeight: 700 }}>{name ? initials(name) : "?"}</div>
+      <MHead title={initial?"Editar chofer":"Nuevo chofer"} onClose={onClose}/>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+        <div style={{width:60,height:60,borderRadius:14,background:color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:22,fontWeight:700}}>{name?initials(name):"?"}</div>
       </div>
-      <Field label="Nombre completo"><Inp value={name} onChange={e => { setName(e.target.value); setErr(""); }} placeholder="Ej: Carlos Méndez" />{err && <div style={{ fontSize: 12, color: "#ef4444", marginTop: 4 }}>{err}</div>}</Field>
-      <Field label="Teléfono"><Inp value={phone} onChange={e => setPhone(e.target.value)} type="tel" placeholder="011-xxxx-xxxx" /></Field>
-      <Field label="Color"><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{AVATAR_COLORS.map(c => <button key={c} onClick={() => setColor(c)} style={{ width: 28, height: 28, borderRadius: 8, background: c, border: color === c ? "3px solid #111" : "3px solid transparent", cursor: "pointer" }} />)}</div></Field>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
+      <Field label="Nombre completo"><Inp value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="Ej: Carlos Méndez"/>{err&&<div style={{fontSize:12,color:"#ef4444",marginTop:4}}>{err}</div>}</Field>
+      <Field label="Teléfono"><Inp value={phone} onChange={e=>setPhone(e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
+      <Field label="Color"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{AVATAR_COLORS.map(c=><button key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:8,background:c,border:color===c?"3px solid #111":"3px solid transparent",cursor:"pointer"}}/>)}</div></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:12}}>
         <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn onClick={() => { if (!name.trim()) { setErr("Nombre obligatorio"); return; } const av = initials(name); onSave(initial ? { ...initial, name: name.trim(), phone: phone.trim(), avatar: av, color } : { id: nextId(allDrivers, "CHF"), name: name.trim(), phone: phone.trim(), status: "disponible", avatar: av, color }); onClose(); }} variant="primary">{initial ? "Guardar" : "Crear chofer"}</Btn>
+        <Btn onClick={()=>{if(!name.trim()){setErr("Nombre obligatorio");return;}const av=initials(name);onSave(initial?{...initial,name:name.trim(),phone:phone.trim(),avatar:av,color}:{id:nextId(allDrivers,"CHF"),name:name.trim(),phone:phone.trim(),status:"disponible",avatar:av,color});onClose();}} variant="primary">{initial?"Guardar":"Crear chofer"}</Btn>
       </div>
     </Modal>
   );
 }
 
-function Confirm({ msg, onConfirm, onClose }) {
-  return (
+function Confirm({msg,onConfirm,onClose}){
+  return(
     <Modal onClose={onClose} w={340}>
-      <div style={{ textAlign: "center", padding: "8px 0" }}>
-        <div style={{ fontSize: 38, marginBottom: 12 }}>⚠️</div>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>¿Eliminar?</h2>
-        <p style={{ fontSize: 13, color: "#64748b", marginBottom: 22, lineHeight: 1.5 }}>{msg}</p>
-        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+      <div style={{textAlign:"center",padding:"8px 0"}}>
+        <div style={{fontSize:38,marginBottom:12}}>⚠️</div>
+        <h2 style={{fontSize:16,fontWeight:600,marginBottom:8}}>¿Confirmar?</h2>
+        <p style={{fontSize:13,color:"#64748b",marginBottom:22,lineHeight:1.5}}>{msg}</p>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
           <Btn onClick={onClose}>Cancelar</Btn>
-          <Btn onClick={() => { onConfirm(); onClose(); }} variant="danger">Eliminar</Btn>
+          <Btn onClick={()=>{onConfirm();onClose();}} variant="danger">Eliminar</Btn>
         </div>
       </div>
     </Modal>
   );
 }
 
-/* ── DRIVER DETAIL (pantalla completa, 3 columnas) ───────────────────────── */
-function DriverDetail({ driver, stops, clients, products, assign, allStops, onAssign, onUnassign, onOptimize, onDispatch, onClose, optResult }) {
-  const drvStops = (assign[driver.id] || []).map(id => stops.find(s => s.id === id)).filter(Boolean);
-  const unassigned = allStops.filter(s => s.status !== "entregado" && !(assign[driver.id] || []).includes(s.id) && !Object.entries(assign).some(([k, v]) => k !== driver.id && v.includes(s.id)));
-  const mapsUrl = buildGoogleMapsUrl(drvStops, clients);
+/* ── DRIVER DETAIL ───────────────────────────────────────────────────────── */
+function DriverDetail({driver,stops,clients,products,assign,allStops,onAssign,onUnassign,onMoveUp,onMoveDown,onOptimize,onDispatch,onClose,optResult,onAddStop}){
+  const drvStops=(assign[driver.id]||[]).map(id=>stops.find(s=>s.id===id)).filter(Boolean);
+  const assignedToThis=(assign[driver.id]||[]);
+  const unassigned=allStops.filter(s=>s.status!=="entregado"&&!assignedToThis.includes(s.id));
+  const mapsUrl=buildMapsUrl(drvStops,clients);
 
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "#fff", zIndex: 300, display: "flex", flexDirection: "column", animation: "fadeIn .2s ease" }}>
+  return(
+    <div style={{position:"fixed",inset:0,background:"#fff",zIndex:300,display:"flex",flexDirection:"column",animation:"fadeIn .2s ease"}}>
       {/* Header */}
-      <div style={{ height: 56, borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", padding: "0 20px", gap: 14, flexShrink: 0, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 14, color: "#64748b", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: 6, fontFamily: "Inter,sans-serif" }}>← Volver</button>
-        <div style={{ width: 34, height: 34, borderRadius: 9, background: driver.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700 }}>{driver.avatar}</div>
+      <div style={{height:56,borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <button onClick={onClose} style={{background:"none",border:"none",fontSize:14,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:5,padding:"4px 8px",borderRadius:6,fontFamily:"Inter,sans-serif"}}>← Volver</button>
+        <div style={{width:34,height:34,borderRadius:9,background:driver.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700}}>{driver.avatar}</div>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>{driver.name}</div>
-          <div style={{ fontSize: 11, color: "#94a3b8" }}>{driver.id} · {driver.phone} · {drvStops.length} paradas</div>
+          <div style={{fontSize:14,fontWeight:600}}>{driver.name}</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>{driver.id} · {driver.phone} · {drvStops.length} paradas</div>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {mapsUrl && (
-            <a href={mapsUrl} target="_blank" rel="noreferrer"
-              style={{ padding: "8px 14px", borderRadius: 8, background: "#1d4ed8", color: "#fff", fontSize: 12, fontWeight: 500, textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
-              🗺️ Abrir ruta completa en Maps
-            </a>
-          )}
-          <Btn onClick={() => onOptimize(driver.id, drvStops)} disabled={drvStops.length < 2} style={{ fontSize: 12 }}>⚡ Optimizar ruta</Btn>
-          <Btn onClick={() => onDispatch(driver.id)} variant="primary" disabled={drvStops.length === 0} style={{ fontSize: 12 }}>🚀 Despachar</Btn>
+        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+          {mapsUrl&&<a href={mapsUrl} target="_blank" rel="noreferrer" style={{padding:"8px 14px",borderRadius:8,background:"#1d4ed8",color:"#fff",fontSize:12,fontWeight:500,textDecoration:"none",display:"flex",alignItems:"center",gap:5}}>🗺️ Abrir ruta en Maps</a>}
+          <Btn onClick={()=>onOptimize(driver.id,drvStops)} disabled={drvStops.length<2} style={{fontSize:12}}>⚡ Optimizar</Btn>
+          <Btn onClick={()=>onDispatch(driver.id)} variant="primary" disabled={drvStops.length===0} style={{fontSize:12}}>🚀 Despachar</Btn>
         </div>
       </div>
 
-      {/* Result bar */}
-      {optResult && (
-        <div style={{ background: "#f0fdf4", borderBottom: "1px solid #bbf7d0", padding: "8px 20px", display: "flex", gap: 20, alignItems: "center", fontSize: 12, flexShrink: 0 }}>
-          <span style={{ fontWeight: 600, color: "#16a34a" }}>⚡ Ruta optimizada:</span>
-          <span style={{ color: "#10b981", fontWeight: 600 }}>{optResult.estimatedTotalKm} km</span>
-          <span style={{ color: "#f59e0b", fontWeight: 600 }}>~{optResult.estimatedTotalMinutes} min</span>
-          <span style={{ color: "#64748b", flex: 1 }}>{optResult.reasoning}</span>
-          {optResult.warnings?.slice(0, 2).map((w, i) => <span key={i} style={{ color: "#ef4444", fontSize: 11 }}>{w}</span>)}
+      {/* AI result bar */}
+      {optResult&&(
+        <div style={{background:"#f0fdf4",borderBottom:"1px solid #bbf7d0",padding:"8px 20px",display:"flex",gap:20,alignItems:"center",fontSize:12,flexShrink:0}}>
+          <span style={{fontWeight:600,color:"#16a34a"}}>⚡ Optimizada:</span>
+          <span style={{color:"#10b981",fontWeight:600}}>{optResult.estimatedTotalKm} km</span>
+          <span style={{color:"#f59e0b",fontWeight:600}}>~{optResult.estimatedTotalMinutes} min</span>
+          <span style={{color:"#64748b",flex:1}}>{optResult.reasoning}</span>
+          {optResult.warnings?.slice(0,2).map((w,i)=><span key={i} style={{color:"#ef4444",fontSize:11}}>⚠ {w}</span>)}
         </div>
       )}
 
-      {/* 3-column body */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr", overflow: "hidden" }}>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr 1.2fr",overflow:"hidden"}}>
 
         {/* Col 1: Sin asignar */}
-        <div style={{ borderRight: "1px solid #f1f5f9", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f1f5f9", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, flexShrink: 0 }}>
-            Sin asignar ({unassigned.length})
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"10px 12px",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+            <span style={{fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5}}>Disponibles ({unassigned.length})</span>
+            <button onClick={onAddStop} style={{padding:"4px 10px",borderRadius:6,border:"none",background:"#111",color:"#fff",fontSize:11,fontWeight:500,cursor:"pointer"}}>+ Nueva</button>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-            {unassigned.length === 0 && <div style={{ textAlign: "center", color: "#e2e8f0", fontSize: 13, marginTop: 32 }}>✓ Todas asignadas</div>}
-            {[...unassigned].sort((a, b) => PO[a.priority] - PO[b.priority]).map(s => {
-              const c = clients.find(x => x.id === s.clientId) || {};
-              const prods = s.products.map(p => { const pr = products.find(x => x.id === p.productId); return pr ? `${pr.name} ×${p.qty}` : ""; }).join(", ");
-              return (
-                <div key={s.id} style={{ background: "#f8fafc", borderRadius: 10, padding: "10px 12px", marginBottom: 8, border: "1px solid #f1f5f9", position: "relative" }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 5 }}>
-                    <PTag p={s.priority} />
-                    <span style={{ fontSize: 10, color: "#94a3b8" }}>⏰ {s.timeLimit}</span>
-                    <button onClick={() => onAssign(driver.id, s.id)} style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 6, border: "none", background: "#111", color: "#fff", fontSize: 11, fontWeight: 500, cursor: "pointer" }}>+ Asignar</button>
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {unassigned.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32,lineHeight:1.6}}>✓ Todas las paradas<br/>están en esta ruta.<br/><span style={{fontSize:11}}>Usá + Nueva para agregar.</span></div>}
+            {[...unassigned].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+              const c=clients.find(x=>x.id===s.clientId)||{};
+              const prods=s.products.map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:""}).join(", ");
+              return(
+                <div key={s.id} style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #f1f5f9"}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:5}}>
+                    <PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
+                    <button onClick={()=>onAssign(driver.id,s.id)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,border:"none",background:"#111",color:"#fff",fontSize:11,fontWeight:500,cursor:"pointer"}}>+ Asignar</button>
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{c.name || "—"}</div>
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 3 }}>{c.address}</div>
-                  <div style={{ fontSize: 11, color: "#6366f1" }}>📦 {prods}</div>
+                  <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{c.name||"—"}</div>
+                  <div style={{fontSize:11,color:"#94a3b8",marginBottom:3}}>{c.address}</div>
+                  <div style={{fontSize:11,color:"#6366f1"}}>📦 {prods}</div>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Col 2: Ruta asignada */}
-        <div style={{ borderRight: "1px solid #f1f5f9", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f1f5f9", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, flexShrink: 0 }}>
-            Ruta de {driver.name} ({drvStops.length})
+        {/* Col 2: Ruta con flechas subir/bajar */}
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>Ruta ({drvStops.length})</span>
+            <span style={{fontSize:10,color:"#cbd5e1",fontWeight:400,textTransform:"none"}}>↑↓ para reordenar</span>
           </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-            {drvStops.length === 0 && <div style={{ textAlign: "center", color: "#e2e8f0", fontSize: 13, marginTop: 32 }}>Sin paradas asignadas</div>}
-            {drvStops.map((s, i) => {
-              const c = clients.find(x => x.id === s.clientId) || {};
-              const prods = s.products.map(p => { const pr = products.find(x => x.id === p.productId); return pr ? `${pr.name} ×${p.qty}` : ""; }).join(", ");
-              const mapsStepUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address || "")}`;
-              return (
-                <div key={s.id} style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", marginBottom: 8, border: "1px solid #e2e8f0" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: i === 0 ? "#6366f1" : "#f1f5f9", color: i === 0 ? "#fff" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0, marginTop: 2 }}>{i === 0 ? "●" : i + 1}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 4 }}>
-                        <PTag p={s.priority} />
-                        <span style={{ fontSize: 10, color: "#94a3b8" }}>⏰ {s.timeLimit}</span>
-                        <button onClick={() => onUnassign(driver.id, s.id)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#ef4444", fontSize: 12, cursor: "pointer" }}>✕</button>
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{c.name}</div>
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 3 }}>{c.address}</div>
-                      <div style={{ fontSize: 11, color: "#6366f1", marginBottom: 5 }}>📦 {prods}</div>
-                      {c.notes && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 5 }}>📝 {c.notes}</div>}
-                      <a href={mapsStepUrl} target="_blank" rel="noreferrer"
-                        style={{ fontSize: 11, color: "#1d4ed8", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        📍 Ver en Maps
-                      </a>
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {drvStops.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin paradas asignadas</div>}
+            {drvStops.map((s,i)=>{
+              const c=clients.find(x=>x.id===s.clientId)||{};
+              const prods=s.products.map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:""}).join(", ");
+              const mapsStep=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address||"")}`;
+              return(
+                <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #e2e8f0",display:"flex",gap:8,alignItems:"flex-start"}}>
+                  {/* Número */}
+                  <div style={{width:24,height:24,borderRadius:"50%",background:i===0?"#6366f1":"#f1f5f9",color:i===0?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{i===0?"●":i+1}</div>
+                  {/* Info */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3}}>
+                      <PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
                     </div>
+                    <div style={{fontSize:12,fontWeight:600,marginBottom:1}}>{c.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginBottom:2}}>{c.address}</div>
+                    <div style={{fontSize:11,color:"#6366f1",marginBottom:4}}>📦 {prods}</div>
+                    {c.notes&&<div style={{fontSize:10,color:"#94a3b8",marginBottom:4}}>📝 {c.notes}</div>}
+                    <a href={mapsStep} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#1d4ed8",textDecoration:"none"}}>📍 Ver en Maps</a>
+                  </div>
+                  {/* Controles */}
+                  <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+                    <button onClick={()=>onMoveUp(driver.id,i)} disabled={i===0}
+                      style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1,display:"flex",alignItems:"center",justifyContent:"center"}} title="Subir">↑</button>
+                    <button onClick={()=>onMoveDown(driver.id,i)} disabled={i===drvStops.length-1}
+                      style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:12,cursor:i===drvStops.length-1?"not-allowed":"pointer",opacity:i===drvStops.length-1?.3:1,display:"flex",alignItems:"center",justifyContent:"center"}} title="Bajar">↓</button>
+                    <button onClick={()=>onUnassign(driver.id,s.id)}
+                      style={{width:24,height:24,borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#ef4444"}} title="Quitar">✕</button>
                   </div>
                 </div>
               );
@@ -496,15 +446,15 @@ function DriverDetail({ driver, stops, clients, products, assign, allStops, onAs
         </div>
 
         {/* Col 3: Mapa */}
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", background: "#f8f9fa" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #f1f5f9", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: .5, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span>Mapa de ruta</span>
-            {mapsUrl && <a href={mapsUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "#1d4ed8", textDecoration: "none" }}>Abrir en Maps →</a>}
+        <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>Mapa</span>
+            {mapsUrl&&<a href={mapsUrl} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#1d4ed8",textDecoration:"none"}}>Abrir en Maps →</a>}
           </div>
-          <div style={{ flex: 1, padding: 10 }}>
-            {drvStops.length === 0
-              ? <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#cbd5e1", fontSize: 13, flexDirection: "column", gap: 8 }}><span style={{ fontSize: 40 }}>🗺️</span>Asigná paradas para ver la ruta</div>
-              : <RouteMap stops={drvStops} clients={clients} />
+          <div style={{flex:1,padding:10}}>
+            {drvStops.length===0
+              ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8}}><span style={{fontSize:40}}>🗺️</span>Asigná paradas para ver la ruta</div>
+              :<RouteMap stops={drvStops} clients={clients}/>
             }
           </div>
         </div>
@@ -514,149 +464,223 @@ function DriverDetail({ driver, stops, clients, products, assign, allStops, onAs
 }
 
 /* ── MAIN APP ─────────────────────────────────────────────────────────────── */
-function App() {
-  const init = load() || DEMO;
-  const [drivers, setDrivers]   = useState(init.drivers || DEMO.drivers);
-  const [clients, setClients]   = useState(init.clients || DEMO.clients);
-  const [products, setProducts] = useState(init.products || DEMO.products);
-  const [stops, setStops]       = useState(init.stops || DEMO.stops);
-  const [assign, setAssign]     = useState(init.assignments || {});
-  const [page, setPage]         = useState("dispatch");
-  const [detailDrv, setDetailDrv] = useState(null);
-  const [optResults, setOptResults] = useState({});
-  const [toast, setToast]       = useState(null);
-  const [modal, setModal]       = useState(null);
-  const [confirm, setConfirm]   = useState(null);
+function App(){
+  const init=load()||DEMO;
+  const [drivers,setDrivers]   = useState(init.drivers||DEMO.drivers);
+  const [clients,setClients]   = useState(init.clients||DEMO.clients);
+  const [products,setProducts] = useState(init.products||DEMO.products);
+  const [stops,setStops]       = useState(init.stops||DEMO.stops);
+  const [assign,setAssign]     = useState(init.assignments||{});
+  const [page,setPage]         = useState("dispatch");
+  const [detailDrv,setDetailDrv] = useState(null);
+  const [optResults,setOptResults] = useState({});
+  const [toast,setToast]       = useState(null);
+  const [modal,setModal]       = useState(null);
+  const [confirm,setConfirm]   = useState(null);
+  const [currentDate,setCurrentDate] = useState(todayStr());
+  const [showHistory,setShowHistory] = useState(false);
 
-  useEffect(() => persist({ drivers, clients, products, stops, assignments: assign }), [drivers, clients, products, stops, assign]);
+  // Persist on change
+  useEffect(()=>persist({drivers,clients,products,stops,assignments:assign}),[drivers,clients,products,stops,assign]);
 
-  const t_ = (msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
-  const openModal = (type, data = null) => setModal({ type, data });
-  const closeModal = () => setModal(null);
+  // Auto-save history every time stops/assign change (for current date)
+  useEffect(()=>{
+    const h=loadHist();
+    h[currentDate]={stops:stops.map(s=>({...s})),assignments:{...assign},savedAt:new Date().toISOString()};
+    saveHist(h);
+  },[stops,assign,currentDate]);
 
-  function handleOptimize(driverId, drvStops) {
-    if (drvStops.length < 2) { t_("Necesitás al menos 2 paradas", "warn"); return; }
-    const result = localOptimize(drvStops, clients);
-    setAssign(a => ({ ...a, [driverId]: result.orderedIds }));
-    setOptResults(p => ({ ...p, [driverId]: result }));
+  const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
+  const openModal=(type,data=null)=>setModal({type,data});
+  const closeModal=()=>setModal(null);
+
+  // Load a date from history
+  function loadFromHistory(date,entry){
+    // Reset statuses to pendiente so we can re-use the route
+    const freshStops=entry.stops.map(s=>({...s,status:"pendiente",signature:undefined,deliveredAt:undefined,note:undefined}));
+    // Generate new IDs to avoid conflicts
+    const idMap={};
+    const renamedStops=freshStops.map(s=>{
+      const newId="ST"+Date.now()+Math.random().toString(36).slice(2,6);
+      idMap[s.id]=newId;
+      return {...s,id:newId};
+    });
+    const renamedAssign={};
+    for(const [did,ids] of Object.entries(entry.assignments||{})){
+      renamedAssign[did]=ids.map(id=>idMap[id]).filter(Boolean);
+    }
+    setStops(renamedStops);
+    setAssign(renamedAssign);
+    setCurrentDate(todayStr());
+    t_(`Ruta del ${fmtDate(date)} cargada como base para hoy ✓`);
+  }
+
+  function handleOptimize(driverId,drvStops){
+    if(drvStops.length<2){t_("Necesitás al menos 2 paradas","warn");return;}
+    const result=localOptimize(drvStops,clients);
+    setAssign(a=>({...a,[driverId]:result.orderedIds}));
+    setOptResults(p=>({...p,[driverId]:result}));
     t_("⚡ Ruta optimizada");
   }
 
-  function handleDispatch(driverId) {
-    setDrivers(d => d.map(x => x.id === driverId ? { ...x, status: "en_ruta" } : x));
+  function handleDispatch(driverId){
+    setDrivers(d=>d.map(x=>x.id===driverId?{...x,status:"en_ruta"}:x));
     t_("Ruta despachada ✓");
   }
 
-  const unassignedAll = stops.filter(s => s.status !== "entregado" && !Object.values(assign).flat().includes(s.id));
+  // Move stop up in driver's route
+  function handleMoveUp(driverId,idx){
+    if(idx===0)return;
+    setAssign(a=>{
+      const arr=[...(a[driverId]||[])];
+      [arr[idx-1],arr[idx]]=[arr[idx],arr[idx-1]];
+      return {...a,[driverId]:arr};
+    });
+  }
 
-  const navItem = (id, label, icon) => (
-    <button onClick={() => setPage(id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "none", background: page === id ? "#f1f5f9" : "transparent", color: page === id ? "#111" : "#64748b", fontSize: 13, fontWeight: page === id ? 600 : 400, width: "100%", textAlign: "left", cursor: "pointer" }}>
-      <span style={{ fontSize: 16 }}>{icon}</span>{label}
+  // Move stop down in driver's route
+  function handleMoveDown(driverId,idx){
+    setAssign(a=>{
+      const arr=[...(a[driverId]||[])];
+      if(idx>=arr.length-1)return a;
+      [arr[idx],arr[idx+1]]=[arr[idx+1],arr[idx]];
+      return {...a,[driverId]:arr};
+    });
+  }
+
+  const unassignedAll=stops.filter(s=>s.status!=="entregado"&&!Object.values(assign).flat().includes(s.id));
+  const hist=loadHist();
+  const histCount=Object.keys(hist).length;
+
+  const navItem=(id,label,icon)=>(
+    <button onClick={()=>setPage(id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:page===id?"#f1f5f9":"transparent",color:page===id?"#111":"#64748b",fontSize:13,fontWeight:page===id?600:400,width:"100%",textAlign:"left",cursor:"pointer"}}>
+      <span style={{fontSize:16}}>{icon}</span>{label}
     </button>
   );
 
-  return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f8f9fa" }}>
+  return(
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
 
       {/* HEADER */}
-      <header style={{ height: 54, background: "#fff", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", padding: "0 20px", gap: 14, flexShrink: 0, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 7, background: "#111", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>🚛</div>
-          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: -.3 }}>CachoFer</span>
-          <span style={{ fontSize: 11, color: "#94a3b8", background: "#f1f5f9", padding: "2px 8px", borderRadius: 20 }}>Central</span>
+      <header style={{height:54,background:"#fff",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:28,height:28,borderRadius:7,background:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🚛</div>
+          <span style={{fontWeight:700,fontSize:15,letterSpacing:-.3}}>CachoFer</span>
+          <span style={{fontSize:11,color:"#94a3b8",background:"#f1f5f9",padding:"2px 8px",borderRadius:20}}>Central</span>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 20, alignItems: "center" }}>
-          {[[stops.filter(s => s.status !== "entregado").length, "pendientes", "📦"], [stops.filter(s => s.status === "entregado").length, "entregadas", "✅"], [clients.length, "clientes", "👤"], [products.length, "productos", "🏷️"]].map(([v, l, ic]) => (
-            <div key={l} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 13 }}>{ic}</span><span style={{ fontSize: 13, fontWeight: 600 }}>{v}</span><span style={{ fontSize: 11, color: "#94a3b8" }}>{l}</span>
+
+        {/* Date selector + history */}
+        {page==="dispatch"&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:9,padding:"5px 10px"}}>
+              <span style={{fontSize:13}}>📅</span>
+              <input type="date" value={currentDate} onChange={e=>setCurrentDate(e.target.value)}
+                style={{border:"none",background:"transparent",fontSize:13,fontWeight:500,color:"#111",outline:"none",cursor:"pointer"}}/>
+              <span style={{fontSize:11,color:"#94a3b8"}}>{dayName(currentDate)}</span>
+            </div>
+            <button onClick={()=>setShowHistory(true)}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#64748b",cursor:"pointer"}}>
+              🗂️ Historial {histCount>0&&<span style={{background:"#f1f5f9",borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:600}}>{histCount}</span>}
+            </button>
+            <button onClick={()=>{const h=loadHist();h[currentDate]={stops,assignments:assign,savedAt:new Date().toISOString()};saveHist(h);t_(`Ruta del ${fmtDate(currentDate)} guardada ✓`);}}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #bbf7d0",background:"#f0fdf4",fontSize:12,fontWeight:500,color:"#16a34a",cursor:"pointer"}}>
+              💾 Guardar ruta
+            </button>
+          </div>
+        )}
+
+        <div style={{marginLeft:"auto",display:"flex",gap:20,alignItems:"center"}}>
+          {[[stops.filter(s=>s.status!=="entregado").length,"pendientes","📦"],[stops.filter(s=>s.status==="entregado").length,"entregadas","✅"],[clients.length,"clientes","👤"],[products.length,"productos","🏷️"]].map(([v,l,ic])=>(
+            <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:13}}>{ic}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span><span style={{fontSize:11,color:"#94a3b8"}}>{l}</span>
             </div>
           ))}
         </div>
       </header>
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "200px 1fr", overflow: "hidden" }}>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"200px 1fr",overflow:"hidden"}}>
+
         {/* SIDEBAR */}
-        <nav style={{ background: "#fff", borderRight: "1px solid #f1f5f9", padding: "12px 10px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {navItem("dispatch", "Despacho", "🚛")}
-          {navItem("clients", "Clientes", "👤")}
-          {navItem("products", "Productos", "📦")}
-          <div style={{ flex: 1 }} />
-          <div style={{ fontSize: 10, color: "#cbd5e1", padding: "4px 12px" }}>CachoFer v3.1</div>
+        <nav style={{background:"#fff",borderRight:"1px solid #f1f5f9",padding:"12px 10px",display:"flex",flexDirection:"column",gap:2}}>
+          {navItem("dispatch","Despacho","🚛")}
+          {navItem("clients","Clientes","👤")}
+          {navItem("products","Productos","📦")}
+          <div style={{flex:1}}/>
+          <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px"}}>CachoFer v4.0</div>
         </nav>
 
         {/* CONTENT */}
-        <div style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
 
           {/* DISPATCH */}
-          {page === "dispatch" && (
-            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "240px 1fr", overflow: "hidden" }}>
+          {page==="dispatch"&&(
+            <div style={{flex:1,display:"grid",gridTemplateColumns:"240px 1fr",overflow:"hidden"}}>
+
               {/* Choferes */}
-              <div style={{ borderRight: "1px solid #f1f5f9", background: "#fff", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: .5 }}>Choferes</span>
-                  <button onClick={() => openModal("addDriver")} style={{ width: 24, height: 24, borderRadius: 6, background: "#111", border: "none", color: "#fff", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>+</button>
+              <div style={{borderRight:"1px solid #f1f5f9",background:"#fff",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                <div style={{padding:"14px 14px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5}}>Choferes</span>
+                  <button onClick={()=>openModal("addDriver")} style={{width:24,height:24,borderRadius:6,background:"#111",border:"none",color:"#fff",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>+</button>
                 </div>
-                <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
-                  {drivers.map(dr => {
-                    const cnt = (assign[dr.id] || []).length;
-                    return (
-                      <div key={dr.id}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px", borderRadius: 10, marginBottom: 2, border: "1px solid transparent", transition: "all .15s" }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#f8fafc"; e.currentTarget.style.borderColor = "#e2e8f0"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; }}>
-                        <div onClick={() => setDetailDrv(dr)} style={{ width: 36, height: 36, borderRadius: 10, background: dr.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: "pointer" }}>{dr.avatar}</div>
-                        <div onClick={() => setDetailDrv(dr)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
-                          <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dr.name}</div>
-                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
-                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: dr.status === "en_ruta" ? "#10b981" : "#e2e8f0", display: "inline-block" }} />
-                            {dr.status === "en_ruta" ? "En ruta" : "Disponible"} · <span style={{ color: cnt > 0 ? "#6366f1" : "#94a3b8" }}>{cnt}</span>
+                <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px"}}>
+                  {drivers.map(dr=>{
+                    const cnt=(assign[dr.id]||[]).length;
+                    return(
+                      <div key={dr.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px",borderRadius:10,marginBottom:2,border:"1px solid transparent",transition:"all .15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background="#f8fafc";e.currentTarget.style.borderColor="#e2e8f0";}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>
+                        <div onClick={()=>setDetailDrv(dr)} style={{width:36,height:36,borderRadius:10,background:dr.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0,cursor:"pointer"}}>{dr.avatar}</div>
+                        <div onClick={()=>setDetailDrv(dr)} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                          <div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dr.name}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",marginTop:1,display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:dr.status==="en_ruta"?"#10b981":"#e2e8f0",display:"inline-block"}}/>
+                            {dr.status==="en_ruta"?"En ruta":"Disponible"} · <span style={{color:cnt>0?"#6366f1":"#94a3b8"}}>{cnt}</span>
                           </div>
                         </div>
-                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                          <button onClick={e => { e.stopPropagation(); openModal("editDriver", dr); }} title="Editar" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
-                          <button onClick={e => { e.stopPropagation(); setConfirm({ msg: `¿Eliminar al chofer ${dr.name}? Sus paradas quedarán sin asignar.`, fn: () => { setDrivers(p => p.filter(x => x.id !== dr.id)); setAssign(a => { const cp = { ...a }; delete cp[dr.id]; return cp; }); if (detailDrv?.id === dr.id) setDetailDrv(null); t_(`${dr.name} eliminado`); } }); }} title="Eliminar" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #fee2e2", background: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>🗑️</button>
+                        <div style={{display:"flex",gap:4,flexShrink:0}}>
+                          <button onClick={e=>{e.stopPropagation();openModal("editDriver",dr);}} title="Editar" style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✏️</button>
+                          <button onClick={e=>{e.stopPropagation();setConfirm({msg:`¿Eliminar a ${dr.name}?`,fn:()=>{setDrivers(p=>p.filter(x=>x.id!==dr.id));setAssign(a=>{const cp={...a};delete cp[dr.id];return cp;});if(detailDrv?.id===dr.id)setDetailDrv(null);t_(`${dr.name} eliminado`);}});}} title="Eliminar" style={{width:24,height:24,borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🗑️</button>
                         </div>
                       </div>
                     );
                   })}
-                  {drivers.length === 0 && <div style={{ textAlign: "center", color: "#e2e8f0", fontSize: 13, marginTop: 32 }}>Sin choferes.<br />Creá uno con +</div>}
+                  {drivers.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin choferes.<br/>Creá uno con +</div>}
                 </div>
-                <div style={{ padding: "10px 14px", borderTop: "1px solid #f1f5f9", flexShrink: 0 }}>
-                  {[["Sin asignar", unassignedAll.length], ["Urgentes", stops.filter(s => s.priority === "urgente" && s.status !== "entregado").length]].map(([l, v]) => (
-                    <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}><span style={{ color: "#94a3b8" }}>{l}</span><span style={{ fontWeight: 600 }}>{v}</span></div>
+                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",flexShrink:0}}>
+                  {[["Sin asignar",unassignedAll.length],["Urgentes",stops.filter(s=>s.priority==="urgente"&&s.status!=="entregado").length]].map(([l,v])=>(
+                    <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style={{color:"#94a3b8"}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
                   ))}
                 </div>
               </div>
 
               {/* Paradas sin asignar */}
-              <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", background: "#f8f9fa" }}>
-                <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, background: "#fff", borderBottom: "1px solid #f1f5f9" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>Paradas sin asignar <span style={{ color: "#94a3b8", fontWeight: 400 }}>({unassignedAll.length})</span></span>
-                  <Btn onClick={() => openModal("addStop")} variant="primary" style={{ fontSize: 12, padding: "6px 14px" }}>+ Nueva parada</Btn>
+              <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+                <div style={{padding:"14px 16px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"#fff",borderBottom:"1px solid #f1f5f9"}}>
+                  <span style={{fontSize:13,fontWeight:600}}>Paradas sin asignar <span style={{color:"#94a3b8",fontWeight:400}}>({unassignedAll.length})</span></span>
+                  <Btn onClick={()=>openModal("addStop")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nueva parada</Btn>
                 </div>
-                <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
-                  {unassignedAll.length === 0 && <div style={{ textAlign: "center", color: "#cbd5e1", fontSize: 13, marginTop: 48 }}>✓ Todas las paradas están asignadas</div>}
-                  {[...unassignedAll].sort((a, b) => PO[a.priority] - PO[b.priority]).map(s => {
-                    const c = clients.find(x => x.id === s.clientId) || {};
-                    const prods = s.products.map(p => { const pr = products.find(x => x.id === p.productId); return pr ? `${pr.name} ×${p.qty}` : "?"; }).join(", ");
-                    return (
-                      <div key={s.id} style={{ background: "#fff", borderRadius: 12, padding: "13px 15px", marginBottom: 8, border: "1px solid #f1f5f9", position: "relative", transition: "box-shadow .15s" }}
-                        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)"}
-                        onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
-                        <div style={{ position: "absolute", left: 0, top: 12, bottom: 12, width: 3, borderRadius: 4, background: PC[s.priority] }} />
-                        <div style={{ paddingLeft: 10 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
-                            <PTag p={s.priority} />
-                            <span style={{ fontSize: 10, color: "#94a3b8" }}>⏰ {s.timeLimit}</span>
-                            <div style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
-                              <button onClick={() => openModal("editStop", s)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", fontSize: 11, cursor: "pointer" }}>✏️</button>
-                              <button onClick={() => setConfirm({ msg: `¿Eliminar parada de ${c.name}?`, fn: () => { setStops(p => p.filter(x => x.id !== s.id)); setAssign(a => { const cp = { ...a }; for (const k in cp) cp[k] = cp[k].filter(i => i !== s.id); return cp; }); t_("Parada eliminada"); } })} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #fee2e2", background: "#fff", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+                <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+                  {unassignedAll.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:48}}>✓ Todas las paradas están asignadas</div>}
+                  {[...unassignedAll].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+                    const c=clients.find(x=>x.id===s.clientId)||{};
+                    const prods=s.products.map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:"?";}).join(", ");
+                    return(
+                      <div key={s.id} style={{background:"#fff",borderRadius:12,padding:"13px 15px",marginBottom:8,border:"1px solid #f1f5f9",position:"relative",transition:"box-shadow .15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 10px rgba(0,0,0,0.06)"}
+                        onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                        <div style={{position:"absolute",left:0,top:12,bottom:12,width:3,borderRadius:4,background:PC[s.priority]}}/>
+                        <div style={{paddingLeft:10}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
+                            <PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
+                            <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+                              <button onClick={()=>openModal("editStop",s)} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                              <button onClick={()=>setConfirm({msg:`¿Eliminar parada de ${c.name}?`,fn:()=>{setStops(p=>p.filter(x=>x.id!==s.id));setAssign(a=>{const cp={...a};for(const k in cp)cp[k]=cp[k].filter(i=>i!==s.id);return cp;});t_("Parada eliminada");}})} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
                             </div>
                           </div>
-                          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>{c.name || "Cliente no encontrado"}</div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{c.address}</div>
-                          <div style={{ fontSize: 12, color: "#6366f1" }}>📦 {prods}</div>
-                          {s.notes && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>📝 {s.notes}</div>}
+                          <div style={{fontSize:13,fontWeight:600,marginBottom:3}}>{c.name||"Cliente no encontrado"}</div>
+                          <div style={{fontSize:12,color:"#64748b",marginBottom:4}}>{c.address}</div>
+                          <div style={{fontSize:12,color:"#6366f1"}}>📦 {prods}</div>
+                          {s.notes&&<div style={{fontSize:11,color:"#94a3b8",marginTop:3}}>📝 {s.notes}</div>}
                         </div>
                       </div>
                     );
@@ -667,59 +691,59 @@ function App() {
           )}
 
           {/* CLIENTS */}
-          {page === "clients" && (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", borderBottom: "1px solid #f1f5f9", flexShrink: 0 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Clientes <span style={{ color: "#94a3b8", fontWeight: 400 }}>({clients.length})</span></span>
-                <Btn onClick={() => openModal("addClient")} variant="primary" style={{ fontSize: 12, padding: "6px 14px" }}>+ Nuevo cliente</Btn>
+          {page==="clients"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Clientes <span style={{color:"#94a3b8",fontWeight:400}}>({clients.length})</span></span>
+                <Btn onClick={()=>openModal("addClient")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo cliente</Btn>
               </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
-                  {clients.map(c => (
-                    <div key={c.id} style={{ background: "#fff", borderRadius: 12, padding: 16, border: "1px solid #f1f5f9", animation: "fadeIn .2s ease" }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
-                        <div style={{ width: 38, height: 38, borderRadius: 10, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "#6366f1" }}>{initials(c.name)}</div>
-                        <div style={{ display: "flex", gap: 5 }}>
-                          <button onClick={() => openModal("editClient", c)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", fontSize: 11, cursor: "pointer" }}>✏️</button>
-                          <button onClick={() => setConfirm({ msg: `¿Eliminar cliente ${c.name}?`, fn: () => { setClients(p => p.filter(x => x.id !== c.id)); t_("Cliente eliminado"); } })} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #fee2e2", background: "#fff", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+                  {clients.map(c=>(
+                    <div key={c.id} style={{background:"#fff",borderRadius:12,padding:16,border:"1px solid #f1f5f9",animation:"fadeIn .2s ease"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                        <div style={{width:38,height:38,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#6366f1"}}>{initials(c.name)}</div>
+                        <div style={{display:"flex",gap:5}}>
+                          <button onClick={()=>openModal("editClient",c)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                          <button onClick={()=>setConfirm({msg:`¿Eliminar cliente ${c.name}?`,fn:()=>{setClients(p=>p.filter(x=>x.id!==c.id));t_("Cliente eliminado");}})} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
                         </div>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{c.name}</div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 3 }}>📍 {c.address}</div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: c.notes ? 6 : 0 }}>📞 {c.phone || "—"}</div>
-                      {c.notes && <div style={{ fontSize: 11, color: "#94a3b8", padding: "4px 8px", background: "#f8fafc", borderRadius: 6 }}>📝 {c.notes}</div>}
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{c.name}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:3}}>📍 {c.address}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:c.notes?6:0}}>📞 {c.phone||"—"}</div>
+                      {c.notes&&<div style={{fontSize:11,color:"#94a3b8",padding:"4px 8px",background:"#f8fafc",borderRadius:6}}>📝 {c.notes}</div>}
                     </div>
                   ))}
-                  {clients.length === 0 && <div style={{ color: "#e2e8f0", fontSize: 13, gridColumn: "1/-1", textAlign: "center", marginTop: 40 }}>Sin clientes. Creá uno con +</div>}
+                  {clients.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin clientes.</div>}
                 </div>
               </div>
             </div>
           )}
 
           {/* PRODUCTS */}
-          {page === "products" && (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{ padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", borderBottom: "1px solid #f1f5f9", flexShrink: 0 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Productos <span style={{ color: "#94a3b8", fontWeight: 400 }}>({products.length})</span></span>
-                <Btn onClick={() => openModal("addProduct")} variant="primary" style={{ fontSize: 12, padding: "6px 14px" }}>+ Nuevo producto</Btn>
+          {page==="products"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Productos <span style={{color:"#94a3b8",fontWeight:400}}>({products.length})</span></span>
+                <Btn onClick={()=>openModal("addProduct")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo producto</Btn>
               </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 10 }}>
-                  {products.map(p => (
-                    <div key={p.id} style={{ background: "#fff", borderRadius: 12, padding: 14, border: "1px solid #f1f5f9", display: "flex", gap: 12, alignItems: "center" }}>
-                      <div style={{ width: 40, height: 40, borderRadius: 10, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>📦</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                        <div style={{ fontSize: 11, color: "#94a3b8" }}>{p.desc}</div>
-                        <div style={{ fontSize: 10, color: "#6366f1", marginTop: 2, fontWeight: 500 }}>/{p.unit}</div>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+                  {products.map(p=>(
+                    <div key={p.id} style={{background:"#fff",borderRadius:12,padding:14,border:"1px solid #f1f5f9",display:"flex",gap:12,alignItems:"center"}}>
+                      <div style={{width:40,height:40,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📦</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
+                        <div style={{fontSize:11,color:"#94a3b8"}}>{p.desc}</div>
+                        <div style={{fontSize:10,color:"#6366f1",marginTop:2,fontWeight:500}}>/{p.unit}</div>
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <button onClick={() => openModal("editProduct", p)} style={{ padding: "4px 7px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", fontSize: 11, cursor: "pointer" }}>✏️</button>
-                        <button onClick={() => setConfirm({ msg: `¿Eliminar "${p.name}"?`, fn: () => { setProducts(x => x.filter(y => y.id !== p.id)); t_("Producto eliminado"); } })} style={{ padding: "4px 7px", borderRadius: 6, border: "1px solid #fee2e2", background: "#fff", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        <button onClick={()=>openModal("editProduct",p)} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                        <button onClick={()=>setConfirm({msg:`¿Eliminar "${p.name}"?`,fn:()=>{setProducts(x=>x.filter(y=>y.id!==p.id));t_("Producto eliminado");}})} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
                       </div>
                     </div>
                   ))}
-                  {products.length === 0 && <div style={{ color: "#e2e8f0", fontSize: 13, gridColumn: "1/-1", textAlign: "center", marginTop: 40 }}>Sin productos. Creá uno con +</div>}
+                  {products.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin productos.</div>}
                 </div>
               </div>
             </div>
@@ -728,41 +752,39 @@ function App() {
       </div>
 
       {/* DRIVER DETAIL */}
-      {detailDrv && (
+      {detailDrv&&(
         <DriverDetail
-          driver={detailDrv}
-          stops={stops}
-          clients={clients}
-          products={products}
-          assign={assign}
-          allStops={stops}
-          optResult={optResults[detailDrv.id]}
-          onAssign={(did, sid) => setAssign(a => ({ ...a, [did]: [...(a[did] || []), sid] }))}
-          onUnassign={(did, sid) => setAssign(a => ({ ...a, [did]: (a[did] || []).filter(i => i !== sid) }))}
-          onOptimize={handleOptimize}
-          onDispatch={handleDispatch}
-          onClose={() => setDetailDrv(null)}
+          driver={detailDrv} stops={stops} clients={clients} products={products}
+          assign={assign} allStops={stops} optResult={optResults[detailDrv.id]}
+          onAssign={(did,sid)=>setAssign(a=>({...a,[did]:[...(a[did]||[]),sid]}))}
+          onUnassign={(did,sid)=>setAssign(a=>({...a,[did]:(a[did]||[]).filter(i=>i!==sid)}))}
+          onMoveUp={handleMoveUp} onMoveDown={handleMoveDown}
+          onOptimize={handleOptimize} onDispatch={handleDispatch}
+          onAddStop={()=>openModal("addStop")}
+          onClose={()=>setDetailDrv(null)}
         />
       )}
 
+      {/* HISTORY MODAL */}
+      {showHistory&&<HistoryModal onClose={()=>setShowHistory(false)} onLoad={loadFromHistory} currentDate={currentDate}/>}
+
       {/* MODALS */}
-      {modal?.type === "addStop"     && <StopModal    clients={clients} products={products} onClose={closeModal} onSave={s => { setStops(p => [...p, s]); t_("Parada agregada"); }} />}
-      {modal?.type === "editStop"    && <StopModal    initial={modal.data} clients={clients} products={products} onClose={closeModal} onSave={s => { setStops(p => p.map(x => x.id === s.id ? s : x)); t_("Parada actualizada"); }} />}
-      {modal?.type === "addClient"   && <ClientModal  onClose={closeModal} onSave={c => { setClients(p => [...p, c]); t_("Cliente creado"); }} />}
-      {modal?.type === "editClient"  && <ClientModal  initial={modal.data} onClose={closeModal} onSave={c => { setClients(p => p.map(x => x.id === c.id ? c : x)); t_("Cliente actualizado"); }} />}
-      {modal?.type === "addProduct"  && <ProductModal onClose={closeModal} onSave={p => { setProducts(x => [...x, p]); t_("Producto creado"); }} />}
-      {modal?.type === "editProduct" && <ProductModal initial={modal.data} onClose={closeModal} onSave={p => { setProducts(x => x.map(y => y.id === p.id ? p : y)); t_("Producto actualizado"); }} />}
-      {modal?.type === "addDriver"   && <DriverModal  allDrivers={drivers} onClose={closeModal} onSave={d => { setDrivers(p => [...p, d]); t_(`Chofer ${d.name} creado`); }} />}
-      {modal?.type === "editDriver"  && <DriverModal  initial={modal.data} allDrivers={drivers} onClose={closeModal} onSave={d => { setDrivers(p => p.map(x => x.id === d.id ? d : x)); t_("Chofer actualizado"); }} />}
+      {modal?.type==="addStop"    &&<StopModal    clients={clients} products={products} onClose={closeModal} onSave={s=>{setStops(p=>[...p,s]);t_("Parada agregada");}}/>}
+      {modal?.type==="editStop"   &&<StopModal    initial={modal.data} clients={clients} products={products} onClose={closeModal} onSave={s=>{setStops(p=>p.map(x=>x.id===s.id?s:x));t_("Parada actualizada");}}/>}
+      {modal?.type==="addClient"  &&<ClientModal  onClose={closeModal} onSave={c=>{setClients(p=>[...p,c]);t_("Cliente creado");}}/>}
+      {modal?.type==="editClient" &&<ClientModal  initial={modal.data} onClose={closeModal} onSave={c=>{setClients(p=>p.map(x=>x.id===c.id?c:x));t_("Cliente actualizado");}}/>}
+      {modal?.type==="addProduct" &&<ProductModal onClose={closeModal} onSave={p=>{setProducts(x=>[...x,p]);t_("Producto creado");}}/>}
+      {modal?.type==="editProduct"&&<ProductModal initial={modal.data} onClose={closeModal} onSave={p=>{setProducts(x=>x.map(y=>y.id===p.id?p:y));t_("Producto actualizado");}}/>}
+      {modal?.type==="addDriver"  &&<DriverModal  allDrivers={drivers} onClose={closeModal} onSave={d=>{setDrivers(p=>[...p,d]);t_(`Chofer ${d.name} creado`);}}/>}
+      {modal?.type==="editDriver" &&<DriverModal  initial={modal.data} allDrivers={drivers} onClose={closeModal} onSave={d=>{setDrivers(p=>p.map(x=>x.id===d.id?d:x));if(detailDrv?.id===d.id)setDetailDrv(d);t_("Chofer actualizado");}}/>}
 
-      {confirm && <Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={() => setConfirm(null)} />}
-
-      {toast && <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: toast.type === "err" ? "#ef4444" : "#111", color: "#fff", padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 500, boxShadow: "0 4px 20px rgba(0,0,0,0.15)", zIndex: 999, animation: "toastIn .2s ease", whiteSpace: "nowrap" }}>{toast.msg}</div>}
+      {confirm&&<Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
+      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
