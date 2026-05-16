@@ -1,322 +1,405 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>CachoFer — App Chofer</title>
+<title>CachoFer — Chofer</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { height: 100%; overflow: hidden; }
-body { font-family: 'Barlow Condensed', sans-serif; background: #0f0f0f; color: #f0ece4; }
-button:active { opacity: 0.72; }
-button:disabled { opacity: 0.35 !important; cursor: not-allowed; }
-input, textarea { font-family: inherit; }
-::-webkit-scrollbar { width: 3px; }
-::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-textarea::placeholder, input::placeholder { color: #444; }
-@keyframes slideDown { from{opacity:0;transform:translateX(-50%) translateY(-14px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
-@keyframes fadeUp   { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Inter',sans-serif;background:#f8f9fa;color:#111;-webkit-font-smoothing:antialiased}
+button{font-family:'Inter',sans-serif;cursor:pointer}
+input,textarea{font-family:'Inter',sans-serif}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:4px}
+textarea::placeholder,input::placeholder{color:#cbd5e1}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 </style>
 </head>
 <body>
 <div id="root" style="height:100%"></div>
-
 <script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef } = React;
 
-const STORAGE_KEY = "cachofer_v2";
+/* ── STORAGE (misma key que Central) ─────────────────────────────────────── */
+const KEY = "cachofer_v3";
+const load = () => { try{ const r=localStorage.getItem(KEY); return r?JSON.parse(r):null; }catch{return null;} };
+const save = s => { try{localStorage.setItem(KEY,JSON.stringify(s));}catch{} };
 
-const DEMO = {
-  drivers: [
-    { id:"CHF001", name:"Carlos Méndez",  phone:"011-4523-1234", status:"en_ruta", avatar:"CM" },
-    { id:"CHF002", name:"Roberto Díaz",   phone:"011-4789-5678", status:"en_ruta", avatar:"RD" },
-    { id:"CHF003", name:"Ana Gómez",      phone:"011-4321-9876", status:"disponible", avatar:"AG" },
+/* ── FALLBACK si no hay datos de central ─────────────────────────────────── */
+const FALLBACK = {
+  drivers:[
+    {id:"CHF001",name:"Carlos Méndez", phone:"011-4523-1234",status:"disponible",avatar:"CM",color:"#6366f1"},
+    {id:"CHF002",name:"Roberto Díaz",  phone:"011-4789-5678",status:"disponible",avatar:"RD",color:"#f59e0b"},
+    {id:"CHF003",name:"Ana Gómez",     phone:"011-4321-9876",status:"disponible",avatar:"AG",color:"#10b981"},
   ],
-  stops: [
-    { id:"S1", address:"Av. Corrientes 1234, CABA",  recipient:"Mariana López",   phone:"011-1111-2222", package:"Caja mediana — Electrónica",    timeLimit:"10:30", priority:"alta",    status:"pendiente" },
-    { id:"S2", address:"Av. Santa Fe 890, CABA",     recipient:"Jorge Fernández", phone:"011-3333-4444", package:"Sobre — Documentos legales",    timeLimit:"12:00", priority:"media",   status:"pendiente" },
-    { id:"S3", address:"Calle Florida 456, CABA",    recipient:"Sofía Ramírez",   phone:"011-5555-6666", package:"Bolsa — Ropa x3 prendas",       timeLimit:"14:00", priority:"baja",    status:"pendiente" },
-    { id:"S5", address:"Av. Callao 550, CABA",       recipient:"Paula Suárez",    phone:"011-9999-0000", package:"Sobre — Medicamentos urgentes",  timeLimit:"11:00", priority:"urgente", status:"pendiente" },
-  ],
-  assignments: { "CHF001":["S5","S1","S2","S3"], "CHF002":[] }
+  clients:[], products:[], stops:[], assignments:{}
 };
 
-function load() { try{const r=localStorage.getItem(STORAGE_KEY);return r?JSON.parse(r):null}catch{return null} }
-function save(s) { try{localStorage.setItem(STORAGE_KEY,JSON.stringify(s))}catch{} }
+/* ── HELPERS ─────────────────────────────────────────────────────────────── */
+const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
+const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
 
-const PC = { urgente:"#ef4444", alta:"#f59e0b", media:"#3b82f6", baja:"#666" };
-const PBG = { urgente:"rgba(239,68,68,0.12)", alta:"rgba(245,158,11,0.12)", media:"rgba(59,130,246,0.12)", baja:"rgba(100,100,100,0.1)" };
+function PTag({p}){
+  return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;
+}
 
-// ── Signature Pad ────────────────────────────────────────────────────────────
-function SigPad({ onCapture, onCancel }) {
-  const ref = useRef(null);
-  const drawing = useRef(false);
-  const last = useRef(null);
+/* ── SIGNATURE PAD ───────────────────────────────────────────────────────── */
+function SigPad({onCapture,onCancel}){
+  const ref=useRef(null);
+  const drawing=useRef(false);
+  const last=useRef(null);
 
-  function pos(e,c) {
+  function pos(e,c){
     const r=c.getBoundingClientRect();
     const src=e.touches?e.touches[0]:e;
     return {x:src.clientX-r.left,y:src.clientY-r.top};
   }
-  function start(e){ e.preventDefault(); drawing.current=true; last.current=pos(e,ref.current); }
+  function start(e){e.preventDefault();drawing.current=true;last.current=pos(e,ref.current);}
   function move(e){
     e.preventDefault();
     if(!drawing.current) return;
-    const c=ref.current, ctx=c.getContext("2d"), p=pos(e,c);
-    ctx.beginPath(); ctx.moveTo(last.current.x,last.current.y); ctx.lineTo(p.x,p.y);
-    ctx.strokeStyle="#1a1a1a"; ctx.lineWidth=2.5; ctx.lineCap="round"; ctx.stroke();
+    const c=ref.current,ctx=c.getContext("2d"),p=pos(e,c);
+    ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);
+    ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();
     last.current=p;
   }
-  function end(e){ e.preventDefault(); drawing.current=false; }
-  function clear(){ ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height); }
+  function end(e){e.preventDefault();drawing.current=false;}
+  function clear(){ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height);}
 
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#fff",borderRadius:14,padding:22,width:"100%",maxWidth:380,animation:"fadeUp .25s ease"}}>
-        <div style={{fontWeight:900,fontSize:18,color:"#1a1a1a",marginBottom:4}}>FIRMA DEL RECEPTOR</div>
-        <div style={{fontSize:13,color:"#888",marginBottom:14}}>Firmá en el recuadro para confirmar la entrega</div>
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:380,animation:"fadeUp .25s ease"}}>
+        <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Firma del receptor</div>
+        <div style={{fontSize:12,color:"#94a3b8",marginBottom:14}}>Firmá en el recuadro para confirmar la entrega</div>
         <canvas ref={ref} width={340} height={160}
-          style={{border:"2px solid #1a1a1a",borderRadius:8,touchAction:"none",display:"block",width:"100%",background:"#fafafa"}}
+          style={{border:"1.5px solid #e2e8f0",borderRadius:10,touchAction:"none",display:"block",width:"100%",background:"#fafafa"}}
           onMouseDown={start} onMouseMove={move} onMouseUp={end}
-          onTouchStart={start} onTouchMove={move} onTouchEnd={end}
-        />
-        <div style={{display:"flex",gap:10,marginTop:14}}>
-          <button onClick={clear}    style={{padding:"10px 16px",borderRadius:8,border:"2px solid #1a1a1a",background:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:13,flex:1}}>Limpiar</button>
-          <button onClick={onCancel} style={{padding:"10px 16px",borderRadius:8,border:"2px solid #1a1a1a",background:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:13,flex:1}}>Cancelar</button>
-          <button onClick={()=>onCapture(ref.current.toDataURL())}
-            style={{padding:"10px 16px",borderRadius:8,border:"none",background:"#1a1a1a",color:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:13,flex:2}}>✓ Confirmar</button>
+          onTouchStart={start} onTouchMove={move} onTouchEnd={end}/>
+        <div style={{display:"flex",gap:8,marginTop:14}}>
+          <button onClick={clear} style={{flex:1,padding:"10px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Limpiar</button>
+          <button onClick={onCancel} style={{flex:1,padding:"10px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Cancelar</button>
+          <button onClick={()=>onCapture(ref.current.toDataURL())} style={{flex:2,padding:"10px",borderRadius:9,border:"none",background:"#111",color:"#fff",fontSize:13,fontWeight:600}}>✓ Confirmar</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Main App ─────────────────────────────────────────────────────────────────
-function App() {
-  const [screen, setScreen]   = useState("login");
-  const [driverId, setDriverId] = useState("");
-  const [driver, setDriver]   = useState(null);
-  const [myStops, setMyStops] = useState([]);
-  const [curIdx, setCurIdx]   = useState(0);
-  const [showSig, setShowSig] = useState(false);
-  const [note, setNote]       = useState("");
-  const [toast, setToast]     = useState(null);
-  const [err, setErr]         = useState("");
+/* ── MAIN APP ─────────────────────────────────────────────────────────────── */
+function App(){
+  const [screen,setScreen]   = useState("login");
+  const [driver,setDriver]   = useState(null);
+  const [myStops,setMyStops] = useState([]);
+  const [clients,setClients] = useState([]);
+  const [products,setProducts] = useState([]);
+  const [curIdx,setCurIdx]   = useState(0);
+  const [showSig,setShowSig] = useState(false);
+  const [note,setNote]       = useState("");
+  const [toast,setToast]     = useState(null);
+  const [stateData,setStateData] = useState(null);
 
-  // Sync with central every 4s
+  // Cargar datos del localStorage al iniciar
+  const [appData,setAppData] = useState(null);
+  useEffect(()=>{
+    const d = load() || FALLBACK;
+    setAppData(d);
+  },[]);
+
+  // Sync cada 5 segundos cuando está en ruta
   useEffect(()=>{
     if(screen==="login"||!driver) return;
-    const iv = setInterval(()=>{
-      const st = load()||DEMO;
-      const updated = (st.assignments?.[driver.id]||[]).map(id=>st.stops?.find(s=>s.id===id)).filter(Boolean);
+    const iv=setInterval(()=>{
+      const d=load()||FALLBACK;
+      setAppData(d);
+      const updated=(d.assignments?.[driver.id]||[]).map(id=>d.stops?.find(s=>s.id===id)).filter(Boolean);
       setMyStops(updated);
-    },4000);
-    return ()=>clearInterval(iv);
+      setClients(d.clients||[]);
+      setProducts(d.products||[]);
+    },5000);
+    return()=>clearInterval(iv);
   },[screen,driver]);
 
-  const toast_ = (msg,type="ok")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2800); };
+  const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),2800);};
 
-  function login() {
-    const st = load()||DEMO;
-    const dr = st.drivers?.find(d=>d.id.toUpperCase()===driverId.trim().toUpperCase());
-    if(!dr){ setErr("ID no encontrado. Usá CHF001, CHF002 o CHF003"); return; }
-    const stops = (st.assignments?.[dr.id]||[]).map(id=>st.stops?.find(s=>s.id===id)).filter(Boolean);
-    setDriver(dr); setMyStops(stops);
-    const first = stops.findIndex(s=>s.status!=="entregado");
+  function login(dr){
+    const d=load()||FALLBACK;
+    const stops=(d.assignments?.[dr.id]||[]).map(id=>d.stops?.find(s=>s.id===id)).filter(Boolean);
+    setDriver(dr);
+    setMyStops(stops);
+    setClients(d.clients||[]);
+    setProducts(d.products||[]);
+    const first=stops.findIndex(s=>s.status!=="entregado");
     setCurIdx(first>=0?first:0);
     setScreen(stops.length>0?"route":"done");
   }
 
-  function confirmDelivery(sig) {
-    const st = load()||DEMO;
-    const stop = myStops[curIdx];
-    if(st.stops){ st.stops=st.stops.map(s=>s.id===stop.id?{...s,status:"entregado",signature:sig,note,deliveredAt:new Date().toISOString()}:s); save(st); }
-    const updated = myStops.map((s,i)=>i===curIdx?{...s,status:"entregado"}:s);
-    setMyStops(updated); setShowSig(false); setNote("");
-    toast_("✓ Entrega confirmada","ok");
+  function confirmDelivery(sig){
+    const d=load()||FALLBACK;
+    const stop=myStops[curIdx];
+    if(d.stops){
+      d.stops=d.stops.map(s=>s.id===stop.id?{...s,status:"entregado",signature:sig,note,deliveredAt:new Date().toISOString()}:s);
+      save(d);
+    }
+    const updated=myStops.map((s,i)=>i===curIdx?{...s,status:"entregado"}:s);
+    setMyStops(updated);
+    setShowSig(false);
+    setNote("");
+    t_("✓ Entrega confirmada");
     setTimeout(()=>{
-      const next = updated.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");
-      if(next>=0){ setCurIdx(next); setScreen("stop"); }
-      else { const any=updated.findIndex(s=>s.status!=="entregado"); any>=0?setCurIdx(any)||setScreen("stop"):setScreen("done"); }
-    },1100);
+      const next=updated.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");
+      if(next>=0){setCurIdx(next);setScreen("stop");}
+      else{
+        const any=updated.findIndex(s=>s.status!=="entregado");
+        any>=0?(setCurIdx(any),setScreen("stop")):setScreen("done");
+      }
+    },1000);
   }
 
-  const cur = myStops[curIdx];
-  const pending = myStops.filter(s=>s.status!=="entregado").length;
-  const delivered = myStops.filter(s=>s.status==="entregado").length;
+  const cur=myStops[curIdx];
+  const pending=myStops.filter(s=>s.status!=="entregado").length;
+  const delivered=myStops.filter(s=>s.status==="entregado").length;
+  const drivers=appData?.drivers||FALLBACK.drivers;
 
-  // ── LOGIN ──────────────────────────────────────────────────────────────────
-  if(screen==="login") return (
-    <div style={{height:"100%",background:"#0f0f0f",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{width:"100%",maxWidth:340}}>
-        <div style={{textAlign:"center",marginBottom:40}}>
-          <div style={{fontSize:64,marginBottom:8}}>🚛</div>
-          <div style={{fontSize:40,fontWeight:900,letterSpacing:-1}}>CACHO<span style={{color:"#f97316"}}>FER</span></div>
-          <div style={{fontSize:13,color:"#555",letterSpacing:3,marginTop:4}}>APP DEL CHOFER</div>
+  /* ── LOGIN ──────────────────────────────────────────────────────────────── */
+  if(screen==="login") return(
+    <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column"}}>
+      {/* Header */}
+      <div style={{padding:"32px 24px 24px",borderBottom:"1px solid #f1f5f9"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <div style={{width:36,height:36,borderRadius:10,background:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🚛</div>
+          <div>
+            <div style={{fontSize:20,fontWeight:800,letterSpacing:-.5}}>CachoFer</div>
+            <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5}}>APP DEL CHOFER</div>
+          </div>
         </div>
-        <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:14,padding:26}}>
-          <div style={{fontSize:12,color:"#666",marginBottom:5,letterSpacing:1}}>ID DE CHOFER</div>
-          <input style={{width:"100%",background:"#111",border:`2px solid ${err?"#ef4444":"#2a2a2a"}`,borderRadius:10,padding:"14px 16px",fontSize:22,fontWeight:700,color:"#f0ece4",fontFamily:"inherit",outline:"none",letterSpacing:2,textTransform:"uppercase",marginBottom:err?6:14}} placeholder="CHF001" value={driverId} onChange={e=>{setDriverId(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&login()} />
-          {err&&<div style={{fontSize:12,color:"#ef4444",marginBottom:10,lineHeight:1.4}}>{err}</div>}
-          <button onClick={login} style={{width:"100%",background:"#f97316",border:"none",borderRadius:10,padding:14,fontSize:17,fontWeight:900,color:"#fff",fontFamily:"inherit",letterSpacing:1,cursor:"pointer"}}>INGRESAR →</button>
-        </div>
-        <div style={{textAlign:"center",marginTop:18,fontSize:11,color:"#333"}}>IDs de prueba: CHF001 · CHF002 · CHF003</div>
+        <div style={{marginTop:16,fontSize:14,color:"#64748b"}}>Seleccioná tu nombre para ingresar</div>
+      </div>
+
+      {/* Lista de choferes */}
+      <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+        {drivers.length===0&&(
+          <div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40,lineHeight:1.6}}>
+            Sin choferes registrados.<br/>Pedile al administrador que cree tu usuario.
+          </div>
+        )}
+        {drivers.map(dr=>(
+          <button key={dr.id} onClick={()=>login(dr)}
+            style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left",transition:"all .15s",animation:"fadeUp .2s ease"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor="#e2e8f0";e.currentTarget.style.background="#f8fafc";}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor="#f1f5f9";e.currentTarget.style.background="#fff";}}>
+            {/* Avatar */}
+            <div style={{width:48,height:48,borderRadius:13,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16,fontWeight:700,flexShrink:0}}>
+              {dr.avatar}
+            </div>
+            {/* Info */}
+            <div style={{flex:1}}>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:3}}>{dr.name}</div>
+              <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#94a3b8"}}>
+                <span style={{width:7,height:7,borderRadius:"50%",background:dr.status==="en_ruta"?"#10b981":"#cbd5e1",display:"inline-block",flexShrink:0}}/>
+                {dr.status==="en_ruta"?"En ruta":"Disponible"}
+                {dr.phone&&<span style={{color:"#e2e8f0"}}>·</span>}
+                {dr.phone&&<span>{dr.phone}</span>}
+              </div>
+            </div>
+            <span style={{fontSize:18,color:"#e2e8f0"}}>→</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div style={{padding:"12px 20px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
+        <div style={{fontSize:11,color:"#cbd5e1"}}>Los datos se sincronizan con la central automáticamente</div>
       </div>
     </div>
   );
 
-  // ── DONE ───────────────────────────────────────────────────────────────────
-  if(screen==="done") return (
-    <div style={{height:"100%",background:"#0f0f0f",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:18,padding:24}}>
-      <div style={{fontSize:72}}>🎉</div>
-      <div style={{fontSize:34,fontWeight:900,color:"#22c55e",letterSpacing:-1}}>RUTA COMPLETADA</div>
-      <div style={{fontSize:15,color:"#555",textAlign:"center"}}>Todas las entregas del día fueron realizadas</div>
-      <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:12,padding:"18px 40px",textAlign:"center"}}>
-        <div style={{fontSize:44,fontWeight:900,color:"#22c55e"}}>{myStops.length}</div>
-        <div style={{fontSize:12,color:"#555",letterSpacing:2}}>ENTREGAS REALIZADAS</div>
+  /* ── DONE ───────────────────────────────────────────────────────────────── */
+  if(screen==="done") return(
+    <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24}}>
+      <div style={{fontSize:64}}>🎉</div>
+      <div style={{fontSize:26,fontWeight:800,color:"#10b981",letterSpacing:-.5}}>¡Ruta completada!</div>
+      <div style={{fontSize:14,color:"#64748b",textAlign:"center"}}>Todas las entregas del día fueron realizadas</div>
+      <div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:14,padding:"16px 40px",textAlign:"center",marginTop:8}}>
+        <div style={{fontSize:40,fontWeight:800,color:"#10b981"}}>{myStops.length}</div>
+        <div style={{fontSize:11,color:"#64748b",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Entregas realizadas</div>
       </div>
-      <button style={{background:"transparent",border:"none",color:"#444",fontSize:13,cursor:"pointer",marginTop:8,fontFamily:"inherit"}} onClick={()=>{setScreen("login");setDriverId("");setDriver(null);}}>Cerrar sesión</button>
+      <button onClick={()=>{setScreen("login");setDriver(null);}} style={{marginTop:16,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
     </div>
   );
 
-  // ── ROUTE LIST ─────────────────────────────────────────────────────────────
-  if(screen==="route") return (
-    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#0f0f0f"}}>
-      {/* header */}
-      <div style={{background:"#111",borderBottom:"3px solid #f97316",padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-        <div style={{width:38,height:38,borderRadius:8,background:"#f97316",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13}}>{driver?.avatar}</div>
-        <div><div style={{fontWeight:800,fontSize:16}}>{driver?.name}</div><div style={{fontSize:11,color:"#555"}}>{driver?.id}</div></div>
-        <div style={{marginLeft:"auto",textAlign:"right"}}><div style={{fontSize:26,fontWeight:900,color:"#f97316"}}>{pending}</div><div style={{fontSize:9,color:"#555",letterSpacing:2}}>PENDIENTES</div></div>
+  /* ── ROUTE LIST ─────────────────────────────────────────────────────────── */
+  if(screen==="route") return(
+    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
+      {/* Header */}
+      <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <div style={{width:38,height:38,borderRadius:10,background:driver.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
+        <div>
+          <div style={{fontSize:14,fontWeight:700}}>{driver.name}</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>{driver.id}</div>
+        </div>
+        <div style={{marginLeft:"auto",textAlign:"right"}}>
+          <div style={{fontSize:22,fontWeight:800,color:pending>0?"#f97316":"#10b981"}}>{pending}</div>
+          <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase"}}>pendientes</div>
+        </div>
       </div>
-      {/* progress */}
-      <div style={{height:4,background:"#1a1a1a",flexShrink:0}}>
-        <div style={{height:"100%",background:"#22c55e",width:`${myStops.length>0?(delivered/myStops.length)*100:0}%`,transition:"width .6s ease"}} />
+
+      {/* Progress */}
+      <div style={{height:3,background:"#f1f5f9",flexShrink:0}}>
+        <div style={{height:"100%",background:"#10b981",width:`${myStops.length>0?(delivered/myStops.length)*100:0}%`,transition:"width .6s ease"}}/>
       </div>
-      {/* stats */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:1,background:"#0a0a0a",flexShrink:0}}>
+
+      {/* Stats */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:1,background:"#f1f5f9",flexShrink:0}}>
         {[[myStops.length,"TOTAL"],[delivered,"ENTREGADAS"],[pending,"PENDIENTES"]].map(([v,l])=>(
-          <div key={l} style={{background:"#1a1a1a",padding:"10px 0",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:900}}>{v}</div><div style={{fontSize:9,color:"#555",letterSpacing:2}}>{l}</div>
+          <div key={l} style={{background:"#fff",padding:"10px 0",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:700}}>{v}</div>
+            <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1}}>{l}</div>
           </div>
         ))}
       </div>
-      {/* list */}
-      <div style={{flex:1,overflowY:"auto",padding:"14px 14px 90px"}}>
-        <div style={{fontSize:10,color:"#444",letterSpacing:3,marginBottom:10}}>PARADAS DEL DÍA</div>
+
+      {/* List */}
+      <div style={{flex:1,overflowY:"auto",padding:"12px 14px 90px"}}>
+        <div style={{fontSize:10,color:"#94a3b8",letterSpacing:2,marginBottom:10,textTransform:"uppercase"}}>Paradas del día</div>
         {myStops.map((s,i)=>{
-          const done=s.status==="entregado", isCur=i===curIdx&&!done;
-          return (
+          const done=s.status==="entregado";
+          const isCur=i===curIdx&&!done;
+          const c=clients.find(x=>x.id===s.clientId)||{};
+          return(
             <div key={s.id} onClick={()=>{if(!done){setCurIdx(i);setScreen("stop");}}}
-              style={{background:isCur?PBG[s.priority]:done?"rgba(34,197,94,0.05)":"#1a1a1a",border:`2px solid ${isCur?PC[s.priority]:done?"rgba(34,197,94,0.3)":"#2a2a2a"}`,borderRadius:12,padding:"12px 14px",marginBottom:10,cursor:done?"default":"pointer",opacity:done?0.5:1,display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,background:done?"#22c55e":isCur?PC[s.priority]:"#2a2a2a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900}}>
+              style={{background:isCur?"#fff":done?"#f8fafc":"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#e8f5e9":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:done?"default":"pointer",opacity:done?.55:1,display:"flex",alignItems:"center",gap:12,transition:"all .15s"}}>
+              <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?PC[s.priority]:"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
                 {done?"✓":i+1}
               </div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:14,marginBottom:2}}>{s.address}</div>
-                <div style={{fontSize:12,color:"#666"}}>{s.recipient}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
+                <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:14,fontWeight:700,color:PC[s.priority]}}>{s.timeLimit}</div>
-                <div style={{fontSize:9,letterSpacing:1,color:"#555",textTransform:"uppercase"}}>{s.priority}</div>
+                <div style={{fontSize:13,fontWeight:600,color:PC[s.priority]}}>{s.timeLimit}</div>
+                <div style={{fontSize:9,color:"#94a3b8",textTransform:"uppercase",letterSpacing:.5}}>{s.priority}</div>
               </div>
             </div>
           );
         })}
+        {myStops.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:48}}>Sin paradas asignadas.<br/>Contactá al administrador.</div>}
       </div>
+
       {/* FAB */}
       {pending>0&&cur&&(
-        <div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 28px)",maxWidth:400}}>
-          <button onClick={()=>setScreen("stop")} style={{width:"100%",background:"#f97316",border:"none",borderRadius:14,padding:18,fontSize:17,fontWeight:900,color:"#fff",fontFamily:"inherit",letterSpacing:1,cursor:"pointer",boxShadow:"0 4px 22px rgba(249,115,22,0.4)"}}>
-            → IR A ENTREGA #{curIdx+1}
+        <div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 28px)",maxWidth:420}}>
+          <button onClick={()=>setScreen("stop")} style={{width:"100%",background:"#111",border:"none",borderRadius:14,padding:17,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,0.2)"}}>
+            → Ir a entrega #{curIdx+1}
           </button>
         </div>
       )}
     </div>
   );
 
-  // ── STOP DETAIL ────────────────────────────────────────────────────────────
-  if(screen==="stop"&&cur) {
-    const s = cur;
-    return (
-      <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#0f0f0f",overflowY:"auto"}}>
-        {/* top bar */}
-        <div style={{background:PC[s.priority],padding:"13px 18px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <button onClick={()=>setScreen("route")} style={{background:"rgba(0,0,0,0.2)",border:"none",borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>←</button>
-          <div>
-            <div style={{fontWeight:900,fontSize:16,color:"#fff"}}>PARADA {curIdx+1} / {myStops.length}</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.7)"}}>{pending-1} restantes después de esta</div>
+  /* ── STOP DETAIL ────────────────────────────────────────────────────────── */
+  if(screen==="stop"&&cur){
+    const s=cur;
+    const c=clients.find(x=>x.id===s.clientId)||{};
+    const prods=s.products?.map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:"";}).filter(Boolean).join(" · ")||"—";
+    const mapsUrl=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(c.address||"")}&travelmode=driving`;
+
+    return(
+      <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa",overflowY:"auto"}}>
+
+        {/* Top bar */}
+        <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+          <button onClick={()=>setScreen("route")} style={{background:"none",border:"none",fontSize:20,color:"#64748b",cursor:"pointer",padding:"2px 6px",borderRadius:6}}>←</button>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600}}>Parada {curIdx+1} / {myStops.length}</div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>{pending-1} restantes después de esta</div>
           </div>
-          <div style={{marginLeft:"auto",background:"rgba(0,0,0,0.25)",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,color:"#fff"}}>⏰ {s.timeLimit}</div>
+          <div style={{background:PBG[s.priority],border:`1px solid ${PC[s.priority]}20`,borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:600,color:PC[s.priority],textTransform:"capitalize"}}>{s.priority} · ⏰ {s.timeLimit}</div>
         </div>
 
-        <div style={{padding:"14px 14px 120px",flex:1}}>
-          {/* priority tag */}
-          <div style={{display:"inline-flex",alignItems:"center",gap:6,background:PBG[s.priority],border:`1px solid ${PC[s.priority]}`,borderRadius:8,padding:"4px 12px",marginBottom:14}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:PC[s.priority],display:"inline-block"}} />
-            <span style={{fontSize:12,fontWeight:700,letterSpacing:2,color:PC[s.priority],textTransform:"uppercase"}}>{s.priority}</span>
+        <div style={{padding:"14px 14px 110px"}}>
+
+          {/* Dirección */}
+          <div style={{background:"#fff",borderRadius:14,padding:"16px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Dirección de entrega</div>
+            <div style={{fontSize:17,fontWeight:700,lineHeight:1.3,marginBottom:14}}>{c.address||"Sin dirección"}</div>
+            <a href={mapsUrl} target="_blank" rel="noreferrer"
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:10,background:"#1d4ed8",color:"#fff",textDecoration:"none",fontSize:14,fontWeight:600}}>
+              🗺️ Abrir navegación en Maps
+            </a>
           </div>
 
-          {/* address */}
-          <div style={{background:"#1a1a1a",border:"2px solid #2a2a2a",borderRadius:14,padding:18,marginBottom:12}}>
-            <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6}}>DIRECCIÓN</div>
-            <div style={{fontSize:22,fontWeight:900,lineHeight:1.2,marginBottom:16}}>{s.address}</div>
-            <button onClick={()=>window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.address)}&travelmode=driving`,"_blank")}
-              style={{width:"100%",background:"#1d4ed8",border:"none",borderRadius:10,padding:14,fontSize:15,fontWeight:800,color:"#fff",fontFamily:"inherit",cursor:"pointer",letterSpacing:1}}>
-              🗺️ ABRIR EN MAPS
-            </button>
-          </div>
-
-          {/* recipient */}
-          <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:14,padding:18,marginBottom:12}}>
-            <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:10}}>DESTINATARIO</div>
+          {/* Destinatario */}
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Destinatario</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div>
-                <div style={{fontSize:20,fontWeight:800}}>{s.recipient}</div>
-                <div style={{fontSize:13,color:"#666",marginTop:2}}>{s.phone}</div>
+                <div style={{fontSize:16,fontWeight:700}}>{c.name||"—"}</div>
+                <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{c.phone||"Sin teléfono"}</div>
               </div>
-              <button onClick={()=>window.location.href=`tel:${s.phone}`} style={{background:"#16a34a",border:"none",borderRadius:10,padding:"10px 14px",fontSize:20,cursor:"pointer"}}>📞</button>
+              {c.phone&&(
+                <a href={`tel:${c.phone}`} style={{width:42,height:42,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,textDecoration:"none"}}>📞</a>
+              )}
             </div>
+            {c.notes&&<div style={{marginTop:10,padding:"8px 10px",background:"#f8fafc",borderRadius:8,fontSize:12,color:"#64748b"}}>📝 {c.notes}</div>}
           </div>
 
-          {/* package */}
-          <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:14,padding:18,marginBottom:12}}>
-            <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6}}>PAQUETE</div>
-            <div style={{fontSize:18,fontWeight:800}}>📦 {s.package}</div>
+          {/* Paquetes */}
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Paquetes a entregar</div>
+            {s.products?.map(item=>{
+              const pr=products.find(x=>x.id===item.productId);
+              return pr?(
+                <div key={item.productId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f8f9fa"}}>
+                  <div style={{width:32,height:32,borderRadius:8,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📦</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600}}>{pr.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8"}}>{pr.desc}</div>
+                  </div>
+                  <div style={{fontSize:16,fontWeight:700,color:"#6366f1"}}>×{item.qty}</div>
+                </div>
+              ):null;
+            })}
           </div>
 
-          {/* note */}
-          <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:14,padding:18,marginBottom:12}}>
-            <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:6}}>OBSERVACIÓN (opcional)</div>
-            <textarea style={{width:"100%",background:"#111",border:"1px solid #2a2a2a",borderRadius:8,padding:"10px 12px",fontSize:14,color:"#f0ece4",fontFamily:"inherit",resize:"none",outline:"none",minHeight:70}} placeholder="Ej: Dejé con el portero..." value={note} onChange={e=>setNote(e.target.value)} />
-          </div>
-
-          {/* progress dots */}
-          <div style={{background:"#1a1a1a",border:"1px solid #2a2a2a",borderRadius:14,padding:"14px 16px",marginBottom:12}}>
-            <div style={{fontSize:10,color:"#555",letterSpacing:2,marginBottom:10}}>PROGRESO</div>
-            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          {/* Progreso */}
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Progreso de ruta</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {myStops.map((ms,i)=>(
-                <div key={ms.id} onClick={()=>{if(ms.status!=="entregado"){setCurIdx(i);}}} style={{width:30,height:30,borderRadius:"50%",background:ms.status==="entregado"?"#22c55e":i===curIdx?PC[s.priority]:"#2a2a2a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:i===curIdx?"#fff":ms.status==="entregado"?"#fff":"#555",cursor:ms.status!=="entregado"?"pointer":"default"}}>
+                <div key={ms.id} onClick={()=>{if(ms.status!=="entregado"){setCurIdx(i);}}}
+                  style={{width:30,height:30,borderRadius:"50%",background:ms.status==="entregado"?"#10b981":i===curIdx?PC[s.priority]:"#f1f5f9",color:ms.status==="entregado"||i===curIdx?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,cursor:ms.status!=="entregado"?"pointer":"default"}}>
                   {ms.status==="entregado"?"✓":i+1}
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Observación */}
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Observación (opcional)</div>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Ej: Dejé con el portero, nadie en casa…"
+              style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:70,color:"#111"}}/>
+          </div>
         </div>
 
-        {/* bottom btn */}
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:14,background:"linear-gradient(to top,#0f0f0f 70%,transparent)"}}>
-          <button onClick={()=>setShowSig(true)} style={{width:"100%",background:"#22c55e",border:"none",borderRadius:14,padding:18,fontSize:17,fontWeight:900,color:"#fff",fontFamily:"inherit",letterSpacing:1,cursor:"pointer",boxShadow:"0 4px 22px rgba(34,197,94,0.35)"}}>
-            ✓ CONFIRMAR ENTREGA
+        {/* Bottom button */}
+        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 20px",background:"linear-gradient(to top,#f8f9fa 70%,transparent)"}}>
+          <button onClick={()=>setShowSig(true)}
+            style={{width:"100%",background:"#10b981",border:"none",borderRadius:14,padding:17,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(16,185,129,0.3)"}}>
+            ✓ Confirmar entrega
           </button>
         </div>
 
-        {showSig&&<SigPad onCapture={confirmDelivery} onCancel={()=>setShowSig(false)} />}
+        {showSig&&<SigPad onCapture={confirmDelivery} onCancel={()=>setShowSig(false)}/>}
 
-        {toast&&<div style={{position:"fixed",top:72,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#22c55e":"#ef4444",color:"#fff",padding:"11px 22px",borderRadius:10,fontSize:14,fontWeight:700,letterSpacing:.5,boxShadow:"0 4px 18px rgba(0,0,0,0.4)",zIndex:300,animation:"slideDown .25s ease"}}>{toast.msg}</div>}
+        {toast&&<div style={{position:"fixed",top:70,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,boxShadow:"0 4px 18px rgba(0,0,0,0.15)",zIndex:400,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
       </div>
     );
   }
@@ -324,7 +407,7 @@ function App() {
   return null;
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
