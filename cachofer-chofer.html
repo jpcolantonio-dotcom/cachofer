@@ -186,13 +186,13 @@ function HistoryModal({onClose,onLoad,currentDate}){
                   {isToday&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#dbeafe",color:"#1d4ed8"}}>HOY</span>}
                   {isCurrent&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#f0f9ff",color:"#0284c7"}}>CARGADO</span>}
                 </div>
-                <div style={{fontSize:12,color:"#64748b",display:"flex",gap:12"}}>
+                <div style={{fontSize:12,color:"#64748b",display:"flex",gap:12}}>
                   <span>📦 {stopCount} paradas</span>
                   <span>🚛 {assignCount} asignadas</span>
                   <span style={{color:"#10b981"}}>✓ {deliveredCount} entregadas</span>
                 </div>
               </div>
-              <div style={{display:"flex",gap:6"}}>
+              <div style={{display:"flex",gap:6}}>
                 <Btn onClick={()=>{onLoad(date,entry);onClose();}} variant="primary" style={{fontSize:11,padding:"6px 12px"}}>
                   {isCurrent?"Recargar":"Cargar"}
                 </Btn>
