@@ -1,299 +1,699 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CachoFer — Central de Despacho</title>
+<title>CachoFer — Central</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'DM Mono', 'Courier New', monospace; background: #f5f2eb; color: #1a1a1a; height: 100vh; overflow: hidden; }
-button:hover { opacity: 0.82; cursor: pointer; }
-button:disabled { opacity: 0.35; cursor: not-allowed; }
-input, select, textarea { font-family: inherit; }
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
-@keyframes fadeIn { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100vh;overflow:hidden;background:#f8f9fa}
+body{font-family:'Inter',sans-serif;color:#111;-webkit-font-smoothing:antialiased}
+button{font-family:'Inter',sans-serif;cursor:pointer}
+input,select,textarea{font-family:'Inter',sans-serif}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:4px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.leaflet-container{border-radius:10px}
 </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-const STORAGE_KEY = "cachofer_v2";
+/* ─── STORAGE ─────────────────────────────────────────────────────────────── */
+const KEY = "cachofer_v3";
+const load = () => { try { const r=localStorage.getItem(KEY); return r?JSON.parse(r):null; } catch{return null;} };
+const persist = s => { try{localStorage.setItem(KEY,JSON.stringify(s));}catch{} };
 
+/* ─── DEMO DATA ───────────────────────────────────────────────────────────── */
 const DEMO = {
   drivers: [
-    { id:"CHF001", name:"Carlos Méndez",  phone:"011-4523-1234", status:"disponible", avatar:"CM" },
-    { id:"CHF002", name:"Roberto Díaz",   phone:"011-4789-5678", status:"disponible", avatar:"RD" },
-    { id:"CHF003", name:"Ana Gómez",      phone:"011-4321-9876", status:"disponible", avatar:"AG" },
+    {id:"CHF001",name:"Carlos Méndez", phone:"011-4523-1234",status:"disponible",avatar:"CM",color:"#6366f1"},
+    {id:"CHF002",name:"Roberto Díaz",  phone:"011-4789-5678",status:"disponible",avatar:"RD",color:"#f59e0b"},
+    {id:"CHF003",name:"Ana Gómez",     phone:"011-4321-9876",status:"disponible",avatar:"AG",color:"#10b981"},
+  ],
+  clients: [
+    {id:"CL001",name:"Mariana López",   address:"Av. Corrientes 1234, CABA",phone:"011-1111-2222",notes:"Timbre 3B",lat:-34.6037,lng:-58.3816},
+    {id:"CL002",name:"Jorge Fernández", address:"Av. Santa Fe 890, CABA",   phone:"011-3333-4444",notes:"",lat:-34.5960,lng:-58.3930},
+    {id:"CL003",name:"Sofía Ramírez",   address:"Calle Florida 456, CABA",  phone:"011-5555-6666",notes:"Llamar antes",lat:-34.6030,lng:-58.3738},
+    {id:"CL004",name:"Lucas Torres",    address:"Av. Rivadavia 2100, CABA", phone:"011-7777-8888",notes:"",lat:-34.6183,lng:-58.3927},
+    {id:"CL005",name:"Paula Suárez",    address:"Av. Callao 550, CABA",     phone:"011-9999-0000",notes:"Urgente siempre",lat:-34.6010,lng:-58.3920},
+  ],
+  products: [
+    {id:"PR001",name:"Caja pequeña",     desc:"Hasta 5kg",    unit:"unidad"},
+    {id:"PR002",name:"Caja mediana",     desc:"5–15kg",       unit:"unidad"},
+    {id:"PR003",name:"Caja grande",      desc:"15–30kg",      unit:"unidad"},
+    {id:"PR004",name:"Sobre",            desc:"Documentos",   unit:"unidad"},
+    {id:"PR005",name:"Bolsa de tela",    desc:"Ropa / misc",  unit:"unidad"},
+    {id:"PR006",name:"Medicamentos",     desc:"Frágil/frío",  unit:"paquete"},
+    {id:"PR007",name:"Electrodoméstico", desc:"Muy frágil",   unit:"unidad"},
+    {id:"PR008",name:"Pallet",           desc:"+30kg",        unit:"pallet"},
   ],
   stops: [
-    { id:"S1", address:"Av. Corrientes 1234, CABA",  recipient:"Mariana López",   phone:"011-1111-2222", package:"Caja mediana — Electrónica",    timeLimit:"10:30", priority:"alta",    status:"pendiente" },
-    { id:"S2", address:"Av. Santa Fe 890, CABA",     recipient:"Jorge Fernández", phone:"011-3333-4444", package:"Sobre — Documentos legales",    timeLimit:"12:00", priority:"media",   status:"pendiente" },
-    { id:"S3", address:"Calle Florida 456, CABA",    recipient:"Sofía Ramírez",   phone:"011-5555-6666", package:"Bolsa — Ropa x3 prendas",       timeLimit:"14:00", priority:"baja",    status:"pendiente" },
-    { id:"S4", address:"Av. Rivadavia 2100, CABA",   recipient:"Lucas Torres",    phone:"011-7777-8888", package:"Caja grande — Electrodoméstico", timeLimit:"16:00", priority:"alta",    status:"pendiente" },
-    { id:"S5", address:"Av. Callao 550, CABA",       recipient:"Paula Suárez",    phone:"011-9999-0000", package:"Sobre — Medicamentos urgentes",  timeLimit:"11:00", priority:"urgente", status:"pendiente" },
+    {id:"ST001",clientId:"CL005",products:[{productId:"PR004",qty:1}],timeLimit:"11:00",priority:"urgente",status:"pendiente",notes:""},
+    {id:"ST002",clientId:"CL001",products:[{productId:"PR002",qty:2}],timeLimit:"10:30",priority:"alta",   status:"pendiente",notes:""},
+    {id:"ST003",clientId:"CL002",products:[{productId:"PR004",qty:1}],timeLimit:"12:00",priority:"media",  status:"pendiente",notes:""},
+    {id:"ST004",clientId:"CL003",products:[{productId:"PR005",qty:3}],timeLimit:"14:00",priority:"baja",   status:"pendiente",notes:""},
+    {id:"ST005",clientId:"CL004",products:[{productId:"PR007",qty:1}],timeLimit:"16:00",priority:"alta",   status:"pendiente",notes:""},
   ],
   assignments: {}
 };
 
-function load() { try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; } }
-function save(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} }
+/* ─── HELPERS ─────────────────────────────────────────────────────────────── */
+const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
+const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
+const PO  = {urgente:0,alta:1,media:2,baja:3};
+const AVATAR_COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#84cc16"];
+const initials = n => n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+const nextId = (arr,prefix) => { const nums=arr.map(x=>parseInt(x.id.replace(prefix,""))).filter(n=>!isNaN(n)); return prefix+String((nums.length?Math.max(...nums):0)+1).padStart(3,"0"); };
 
-const PC = { urgente:"#e8442a", alta:"#f59e0b", media:"#3b82f6", baja:"#888" };
-
-async function aiOptimize(stops) {
-  const list = stops.map((s,i) => `${i+1}. ${s.address} | ${s.recipient} | Límite: ${s.timeLimit} | Prioridad: ${s.priority} | ${s.package}`).join("\n");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      model:"claude-sonnet-4-20250514", max_tokens:800,
-      messages:[{ role:"user", content:`Eres optimizador logístico en Buenos Aires. Ordená estas paradas:\n${list}\n\nCriteria: urgente primero, respetá horarios, agrupá zonas cercanas.\n\nResponde SOLO JSON:\n{"optimizedOrder":[1,2,3],"estimatedTotalMinutes":120,"estimatedTotalKm":15.5,"reasoning":"2 oraciones","warnings":[]}` }]
-    })
-  });
-  const d = await res.json();
-  const text = d.content.map(b=>b.text||"").join("");
-  return JSON.parse(text.replace(/```json|```/g,"").trim());
+async function aiOptimize(stops,clients) {
+  const list = stops.map((s,i)=>{
+    const c=clients.find(x=>x.id===s.clientId)||{};
+    return `${i+1}. ${c.address||"?"} | ${c.name||"?"} | Límite:${s.timeLimit} | Prioridad:${s.priority}`;
+  }).join("\n");
+  const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:600,messages:[{role:"user",content:`Optimizá el orden de estas paradas en Buenos Aires. Urgente primero, respetá horarios, agrupá zonas cercanas.\n${list}\n\nResponde SOLO JSON válido sin texto extra:\n{"optimizedOrder":[1,2,3],"estimatedTotalMinutes":90,"estimatedTotalKm":12.5,"reasoning":"2 oraciones","warnings":[]}`}]})});
+  const d=await res.json();
+  return JSON.parse(d.content.map(b=>b.text||"").join("").replace(/```json|```/g,"").trim());
 }
 
-function AddModal({ onClose, onAdd }) {
-  const [f, setF] = useState({ address:"", recipient:"", phone:"", package:"", timeLimit:"12:00", priority:"media" });
-  const s = (k,v) => setF(p=>({...p,[k]:v}));
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#fff",border:"3px solid #1a1a1a",borderRadius:10,padding:28,width:460,maxWidth:"92vw"}}>
-        <div style={{fontWeight:700,fontSize:14,letterSpacing:2,textTransform:"uppercase",marginBottom:20}}>+ Nueva Parada</div>
-        {[["Dirección","address","Av. Corrientes 1234, CABA"],["Destinatario","recipient","Nombre completo"],["Teléfono","phone","011-xxxx-xxxx"],["Paquete / detalle","package","Caja pequeña — Ropa"]].map(([l,k,p])=>(
-          <div key={k} style={{marginBottom:12}}>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>{l.toUpperCase()}</div>
-            <input style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none"}} placeholder={p} value={f[k]} onChange={e=>s(k,e.target.value)} />
-          </div>
-        ))}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-          <div>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>HORARIO LÍMITE</div>
-            <input type="time" style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none"}} value={f.timeLimit} onChange={e=>s("timeLimit",e.target.value)} />
-          </div>
-          <div>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"#666",marginBottom:4}}>PRIORIDAD</div>
-            <select style={{border:"2px solid #1a1a1a",borderRadius:5,padding:"9px 12px",fontSize:13,width:"100%",outline:"none",background:"#fff"}} value={f.priority} onChange={e=>s("priority",e.target.value)}>
-              {["urgente","alta","media","baja"].map(p=><option key={p} value={p}>{p.toUpperCase()}</option>)}
-            </select>
-          </div>
-        </div>
-        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-          <button style={{padding:"9px 18px",borderRadius:5,border:"2px solid #1a1a1a",background:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:12}} onClick={onClose}>Cancelar</button>
-          <button style={{padding:"9px 18px",borderRadius:5,border:"2px solid #1a1a1a",background:"#1a1a1a",color:"#fff",fontFamily:"inherit",fontWeight:700,fontSize:12}} onClick={()=>{if(!f.address||!f.recipient||!f.package)return;onAdd({...f,id:"S"+Date.now(),status:"pendiente"});onClose();}}>Agregar</button>
-        </div>
-      </div>
+/* ─── UI PRIMITIVES ──────────────────────────────────────────────────────────*/
+function Modal({onClose,children,w=500}){
+  return(
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(3px)"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:28,width:"100%",maxWidth:w,boxShadow:"0 20px 60px rgba(0,0,0,0.13)",animation:"slideUp .22s ease",maxHeight:"90vh",overflowY:"auto"}}>{children}</div>
     </div>
   );
 }
+function MHead({title,onClose}){
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}><h2 style={{fontSize:17,fontWeight:600}}>{title}</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:22,color:"#94a3b8",cursor:"pointer",lineHeight:1}}>×</button></div>;
+}
+function Field({label,children}){
+  return <div style={{marginBottom:14}}><label style={{fontSize:11,fontWeight:500,color:"#64748b",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>{label}</label>{children}</div>;
+}
+function Inp({value,onChange,placeholder,type="text",style={}}){
+  return <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",...style}}/>;
+}
+function PTag({p}){
+  return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;
+}
+function Btn({children,onClick,variant="secondary",disabled=false,style={}}){
+  const styles={
+    primary:{background:"#111",color:"#fff",border:"none"},
+    secondary:{background:"#fff",color:"#64748b",border:"1.5px solid #e2e8f0"},
+    danger:{background:"#fff",color:"#ef4444",border:"1.5px solid #fee2e2"},
+    ghost:{background:"transparent",color:"#64748b",border:"none"},
+  };
+  return <button onClick={onClick} disabled={disabled} style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:500,cursor:disabled?"not-allowed":"pointer",opacity:disabled?.45:1,transition:"all .15s",...styles[variant],...style}}>{children}</button>;
+}
 
-function App() {
-  const init = load() || DEMO;
-  const [drivers, setDrivers] = useState(init.drivers);
-  const [stops, setStops]     = useState(init.stops);
-  const [assign, setAssign]   = useState(init.assignments || {});
-  const [selDrv, setSelDrv]   = useState(null);
-  const [optResult, setOptResult] = useState(null);
-  const [optimizing, setOptimizing] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-  const [toast, setToast]     = useState(null);
+/* ─── LEAFLET MAP ─────────────────────────────────────────────────────────── */
+function RouteMap({stops,clients}){
+  const ref=useRef(null);
+  const mapRef=useRef(null);
 
-  useEffect(()=>{ save({drivers,stops,assignments:assign}); },[drivers,stops,assign]);
+  useEffect(()=>{
+    if(!ref.current) return;
+    if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; }
+    const map = L.map(ref.current,{zoomControl:true}).setView([-34.61,-58.38],13);
+    mapRef.current=map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OSM",maxZoom:19}).addTo(map);
 
-  const toast_ = (msg,type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+    const pts=[];
+    stops.forEach((s,i)=>{
+      const c=clients.find(x=>x.id===s.clientId);
+      if(!c||!c.lat||!c.lng) return;
+      pts.push([c.lat,c.lng]);
+      const color=PC[s.priority]||"#6366f1";
+      const icon=L.divIcon({className:"",html:`<div style="width:30px;height:30px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.25);font-family:Inter,sans-serif">${i+1}</div>`,iconSize:[30,30],iconAnchor:[15,15]});
+      L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<b>#${i+1} ${c.name}</b><br>${c.address}<br>⏰ ${s.timeLimit}`);
+    });
+    if(pts.length>1){
+      L.polyline(pts,{color:"#6366f1",weight:2.5,dashArray:"6,5",opacity:.7}).addTo(map);
+      map.fitBounds(pts,{padding:[30,30]});
+    } else if(pts.length===1){
+      map.setView(pts[0],15);
+    }
+    return()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;} };
+  },[stops,clients]);
 
-  const drvStops = selDrv ? (assign[selDrv.id]||[]).map(id=>stops.find(s=>s.id===id)).filter(Boolean) : [];
-  const unassigned = stops.filter(s=>!Object.values(assign).flat().includes(s.id));
-  const PO = {urgente:0,alta:1,media:2,baja:3};
+  return <div ref={ref} style={{width:"100%",height:"100%",minHeight:300}}/>;
+}
 
-  function assignStop(stopId) {
-    if(!selDrv){ toast_("Seleccioná un chofer","err"); return; }
-    setAssign(a=>({...a,[selDrv.id]:[...(a[selDrv.id]||[]),stopId]}));
+/* ─── STOP MODAL ─────────────────────────────────────────────────────────── */
+function StopModal({initial,clients,products,onClose,onSave}){
+  const [clientId,setClientId]   = useState(initial?.clientId||"");
+  const [items,setItems]         = useState(initial?.products||[]);
+  const [timeLimit,setTimeLimit] = useState(initial?.timeLimit||"12:00");
+  const [priority,setPriority]   = useState(initial?.priority||"media");
+  const [notes,setNotes]         = useState(initial?.notes||"");
+  const [addProd,setAddProd]     = useState("");
+  const [addQty,setAddQty]       = useState(1);
+
+  function addItem(){
+    if(!addProd) return;
+    if(items.find(i=>i.productId===addProd)){
+      setItems(it=>it.map(i=>i.productId===addProd?{...i,qty:i.qty+addQty}:i));
+    } else {
+      setItems(it=>[...it,{productId:addProd,qty:addQty}]);
+    }
+    setAddProd(""); setAddQty(1);
   }
-  function unassignStop(stopId) {
-    if(!selDrv) return;
-    setAssign(a=>({...a,[selDrv.id]:(a[selDrv.id]||[]).filter(id=>id!==stopId)}));
-  }
-  async function optimize() {
-    if(!selDrv||drvStops.length<2){ toast_("Asigná al menos 2 paradas","err"); return; }
-    setOptimizing(true); setOptResult(null);
-    try {
-      const r = await aiOptimize(drvStops);
-      const ordered = r.optimizedOrder.map(i=>drvStops[i-1]?.id).filter(Boolean);
-      setAssign(a=>({...a,[selDrv.id]:ordered}));
-      setOptResult(r);
-      toast_("✓ Ruta optimizada","ok");
-    } catch(e) { toast_("Error de IA — verificá conexión","err"); }
-    setOptimizing(false);
-  }
-  function dispatch() {
-    if(!selDrv||drvStops.length===0) return;
-    setDrivers(d=>d.map(dr=>dr.id===selDrv.id?{...dr,status:"en_ruta"}:dr));
-    toast_(`Ruta despachada a ${selDrv.name}`,"ok");
+  function removeItem(pid){ setItems(it=>it.filter(i=>i.productId!==pid)); }
+
+  function submit(){
+    if(!clientId||items.length===0) return;
+    onSave({id:initial?.id||"ST"+Date.now(),clientId,products:items,timeLimit,priority,notes,status:initial?.status||"pendiente"});
+    onClose();
   }
 
-  const btn = (v,extra={}) => ({padding:"9px 16px",borderRadius:5,border:"2px solid #1a1a1a",fontFamily:"inherit",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:1,...({primary:{background:"#1a1a1a",color:"#fff"},danger:{background:"#e8442a",color:"#fff",border:"2px solid #e8442a"},green:{background:"#16a34a",color:"#fff",border:"2px solid #16a34a"},ghost:{background:"#fff",color:"#1a1a1a"}}[v]||{}), ...extra});
+  return(
+    <Modal onClose={onClose} w={540}>
+      <MHead title={initial?.id?"Editar parada":"Nueva parada"} onClose={onClose}/>
+      <Field label="Cliente">
+        <select value={clientId} onChange={e=>setClientId(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>
+          <option value="">— Seleccioná un cliente —</option>
+          {clients.map(c=><option key={c.id} value={c.id}>{c.name} — {c.address}</option>)}
+        </select>
+      </Field>
 
-  return (
-    <div style={{height:"100vh",display:"flex",flexDirection:"column"}}>
-      {/* HEADER */}
-      <div style={{background:"#1a1a1a",color:"#f5f2eb",height:58,display:"flex",alignItems:"center",padding:"0 24px",gap:12,flexShrink:0,borderBottom:"3px solid #e8442a"}}>
-        <span style={{fontSize:22}}>🚛</span>
-        <span style={{fontWeight:700,fontSize:18,letterSpacing:-0.5}}>CACHO<span style={{color:"#e8442a"}}>FER</span> Central</span>
-        <span style={{fontSize:11,color:"#666",marginLeft:4}}>Sistema de Despacho</span>
-        <span style={{marginLeft:"auto",background:"#e8442a",color:"#fff",fontSize:9,fontWeight:700,padding:"3px 10px",borderRadius:3,letterSpacing:2}}>CENTRAL</span>
-        <span style={{fontSize:11,color:"#555",marginLeft:12}}>{new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})} hs</span>
-      </div>
-
-      {/* BODY */}
-      <div style={{flex:1,display:"grid",gridTemplateColumns:"280px 1fr 320px",overflow:"hidden"}}>
-
-        {/* LEFT — Choferes */}
-        <div style={{borderRight:"2px solid #1a1a1a",background:"#fff",overflowY:"auto"}}>
-          <div style={{padding:"12px 18px",borderBottom:"2px solid #1a1a1a",fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",background:"#f5f2eb"}}>🚘 Choferes</div>
-          {drivers.map(dr=>{
-            const active = selDrv?.id===dr.id;
-            const cnt = (assign[dr.id]||[]).length;
-            return (
-              <div key={dr.id} onClick={()=>setSelDrv(dr)} style={{padding:"13px 18px",borderBottom:"1px solid #eee",cursor:"pointer",background:active?"#1a1a1a":"#fff",color:active?"#f5f2eb":"#1a1a1a"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:34,height:34,borderRadius:5,background:active?"#e8442a":"#1a1a1a",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:700,fontSize:13}}>{dr.name}</div>
-                    <div style={{fontSize:11,color:active?"#aaa":"#888",marginTop:1}}>
-                      <span style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:dr.status==="en_ruta"?"#16a34a":"#aaa",marginRight:5}}/>
-                      {dr.status==="en_ruta"?"En ruta":"Disponible"} · <span style={{color:"#e8442a"}}>{cnt} paradas</span>
-                    </div>
-                  </div>
-                  {active&&<span style={{fontSize:14}}>→</span>}
-                </div>
+      <Field label="Productos a entregar">
+        <div style={{border:"1.5px solid #e2e8f0",borderRadius:8,padding:10,marginBottom:8,minHeight:48}}>
+          {items.length===0&&<div style={{fontSize:12,color:"#cbd5e1",textAlign:"center",padding:"6px 0"}}>Sin productos agregados</div>}
+          {items.map(item=>{
+            const p=products.find(x=>x.id===item.productId);
+            return(
+              <div key={item.productId} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 6px",background:"#f8fafc",borderRadius:6,marginBottom:5}}>
+                <span style={{fontSize:12,fontWeight:500,flex:1}}>{p?.name||item.productId}</span>
+                <span style={{fontSize:11,color:"#94a3b8"}}>{p?.unit}</span>
+                <span style={{fontSize:13,fontWeight:600,minWidth:24,textAlign:"center"}}>{item.qty}</span>
+                <button onClick={()=>removeItem(item.productId)} style={{background:"none",border:"none",color:"#ef4444",fontSize:14,cursor:"pointer",lineHeight:1}}>×</button>
               </div>
             );
           })}
-          <div style={{padding:"14px 18px",borderTop:"2px solid #eee",marginTop:4}}>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:"#888",marginBottom:8}}>RESUMEN HOY</div>
-            {[["Total paradas",stops.length],["Sin asignar",unassigned.length],["Entregadas",stops.filter(s=>s.status==="entregado").length],["Urgentes",stops.filter(s=>s.priority==="urgente").length]].map(([l,v])=>(
-              <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:5}}><span style={{color:"#888"}}>{l}</span><span style={{fontWeight:700}}>{v}</span></div>
-            ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <select value={addProd} onChange={e=>setAddProd(e.target.value)} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",background:"#fff"}}>
+            <option value="">+ Elegir producto</option>
+            {products.map(p=><option key={p.id} value={p.id}>{p.name} ({p.desc})</option>)}
+          </select>
+          <input type="number" min={1} max={99} value={addQty} onChange={e=>setAddQty(parseInt(e.target.value)||1)} style={{width:60,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",textAlign:"center"}}/>
+          <Btn onClick={addItem} variant="primary" style={{padding:"8px 14px",fontSize:13}}>+ Agregar</Btn>
+        </div>
+      </Field>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Horario límite"><input type="time" value={timeLimit} onChange={e=>setTimeLimit(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/></Field>
+        <Field label="Prioridad">
+          <select value={priority} onChange={e=>setPriority(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>
+            {["urgente","alta","media","baja"].map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Notas internas"><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Ej: timbre roto, dejar con portero..." style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:70}}/></Field>
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={submit} variant="primary" disabled={!clientId||items.length===0}>{initial?.id?"Guardar cambios":"Agregar parada"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── CLIENT MODAL ────────────────────────────────────────────────────────── */
+function ClientModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",address:"",phone:"",notes:"",lat:"",lng:""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  function submit(){
+    if(!f.name||!f.address) return;
+    onSave({...f,id:initial?.id||"CL"+Date.now(),lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});
+    onClose();
+  }
+  return(
+    <Modal onClose={onClose} w={460}>
+      <MHead title={initial?.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Nombre completo o razón social"/></Field>
+      <Field label="Dirección"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, CABA"/></Field>
+      <Field label="Teléfono"><Inp value={f.phone} onChange={e=>s("phone",e.target.value)} placeholder="011-xxxx-xxxx" type="tel"/></Field>
+      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales, etc." style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:68}}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Latitud (opcional)"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-34.6037"/></Field>
+        <Field label="Longitud (opcional)"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-58.3816"/></Field>
+      </div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>Las coordenadas permiten mostrar en el mapa. Podés buscarlas en Google Maps.</div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={submit} variant="primary" disabled={!f.name||!f.address}>{initial?.id?"Guardar":"Crear cliente"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── PRODUCT MODAL ───────────────────────────────────────────────────────── */
+function ProductModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",desc:"",unit:"unidad"});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <Modal onClose={onClose} w={400}>
+      <MHead title={initial?.id?"Editar producto":"Nuevo producto"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Caja mediana"/></Field>
+      <Field label="Descripción"><Inp value={f.desc} onChange={e=>s("desc",e.target.value)} placeholder="Ej: 5–15kg"/></Field>
+      <Field label="Unidad"><select value={f.unit} onChange={e=>s("unit",e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>
+        {["unidad","paquete","pallet","kg","litro","caja"].map(u=><option key={u}>{u}</option>)}
+      </select></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!f.name)return;onSave({...f,id:initial?.id||"PR"+Date.now()});onClose();}} variant="primary" disabled={!f.name}>{initial?.id?"Guardar":"Crear producto"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── DRIVER MODAL ────────────────────────────────────────────────────────── */
+function DriverModal({initial,allDrivers,onClose,onSave}){
+  const [name,setName]   = useState(initial?.name||"");
+  const [phone,setPhone] = useState(initial?.phone||"");
+  const [color,setColor] = useState(initial?.color||AVATAR_COLORS[0]);
+  const [err,setErr]     = useState("");
+  function submit(){
+    if(!name.trim()){setErr("Nombre obligatorio");return;}
+    const av=initials(name);
+    onSave(initial?{...initial,name:name.trim(),phone:phone.trim(),avatar:av,color}:{id:nextId(allDrivers,"CHF"),name:name.trim(),phone:phone.trim(),status:"disponible",avatar:av,color});
+    onClose();
+  }
+  return(
+    <Modal onClose={onClose} w={400}>
+      <MHead title={initial?"Editar chofer":"Nuevo chofer"} onClose={onClose}/>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+        <div style={{width:60,height:60,borderRadius:14,background:color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:22,fontWeight:700}}>{name?initials(name):"?"}</div>
+      </div>
+      <Field label="Nombre completo"><Inp value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="Ej: Carlos Méndez"/>{err&&<div style={{fontSize:12,color:"#ef4444",marginTop:4}}>{err}</div>}</Field>
+      <Field label="Teléfono"><Inp value={phone} onChange={e=>setPhone(e.target.value)} placeholder="011-xxxx-xxxx" type="tel"/></Field>
+      <Field label="Color del avatar"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{AVATAR_COLORS.map(c=><button key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:8,background:c,border:color===c?"3px solid #111":"3px solid transparent",cursor:"pointer"}}/>)}</div></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={submit} variant="primary">{initial?"Guardar cambios":"Crear chofer"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── CONFIRM MODAL ───────────────────────────────────────────────────────── */
+function Confirm({msg,onConfirm,onClose}){
+  return(
+    <Modal onClose={onClose} w={340}>
+      <div style={{textAlign:"center",padding:"8px 0"}}>
+        <div style={{fontSize:38,marginBottom:12}}>⚠️</div>
+        <h2 style={{fontSize:16,fontWeight:600,marginBottom:8}}>¿Eliminar?</h2>
+        <p style={{fontSize:13,color:"#64748b",marginBottom:22,lineHeight:1.5}}>{msg}</p>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+          <Btn onClick={onClose}>Cancelar</Btn>
+          <Btn onClick={()=>{onConfirm();onClose();}} variant="danger" style={{background:"#ef4444",color:"#fff",border:"none"}}>Eliminar</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── DRIVER DETAIL (split screen) ───────────────────────────────────────── */
+function DriverDetail({driver,stops,clients,products,assign,onAssign,onUnassign,onClose,allStops,onOptimize,optimizing,aiRes,onDispatch}){
+  const drvStops=(assign[driver.id]||[]).map(id=>stops.find(s=>s.id===id)).filter(Boolean);
+  const unassigned=allStops.filter(s=>s.status!=="entregado"&&!(assign[driver.id]||[]).includes(s.id)&&!Object.entries(assign).some(([k,v])=>k!==driver.id&&v.includes(s.id)));
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#fff",zIndex:300,display:"flex",flexDirection:"column",animation:"fadeIn .2s ease"}}>
+      {/* Header */}
+      <div style={{height:56,borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0}}>
+        <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,color:"#64748b",cursor:"pointer",display:"flex",alignItems:"center",gap:5,padding:"4px 8px",borderRadius:6}}>← Volver</button>
+        <div style={{width:34,height:34,borderRadius:9,background:driver.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700}}>{driver.avatar}</div>
+        <div>
+          <div style={{fontSize:14,fontWeight:600}}>{driver.name}</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>{driver.id} · {drvStops.length} paradas asignadas</div>
+        </div>
+        <div style={{marginLeft:"auto",display:"flex",gap:8}}>
+          <Btn onClick={()=>onOptimize(driver.id,drvStops)} disabled={optimizing||drvStops.length<2} style={{fontSize:12}}>
+            {optimizing?"⏳ Optimizando...":"🤖 Optimizar ruta"}
+          </Btn>
+          <Btn onClick={()=>onDispatch(driver.id)} variant="primary" disabled={drvStops.length===0} style={{fontSize:12}}>🚀 Despachar</Btn>
+        </div>
+      </div>
+
+      {/* AI result bar */}
+      {aiRes&&<div style={{background:"#f0f9ff",borderBottom:"1px solid #bae6fd",padding:"8px 20px",display:"flex",gap:20,alignItems:"center",fontSize:12,flexShrink:0}}>
+        <span style={{fontWeight:600,color:"#0284c7"}}>🤖 IA:</span>
+        <span style={{color:"#10b981",fontWeight:600}}>{aiRes.estimatedTotalKm} km</span>
+        <span style={{color:"#f59e0b",fontWeight:600}}>{aiRes.estimatedTotalMinutes} min</span>
+        <span style={{color:"#64748b",flex:1}}>{aiRes.reasoning}</span>
+        {aiRes.warnings?.map((w,i)=><span key={i} style={{color:"#ef4444"}}>⚠ {w}</span>)}
+      </div>}
+
+      {/* Split body */}
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr 1fr",overflow:"hidden"}}>
+
+        {/* Col 1: Sin asignar */}
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>
+            Sin asignar ({unassigned.length})
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {unassigned.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>✓ Todas asignadas</div>}
+            {[...unassigned].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+              const c=clients.find(x=>x.id===s.clientId)||{};
+              const prods=s.products.map(p=>{ const pr=products.find(x=>x.id===p.productId); return pr?`${pr.name} ×${p.qty}`:""; }).join(", ");
+              return(
+                <div key={s.id} style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #f1f5f9",position:"relative"}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:5}}>
+                    <PTag p={s.priority}/>
+                    <span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
+                    <button onClick={()=>onAssign(driver.id,s.id)} style={{marginLeft:"auto",padding:"3px 10px",borderRadius:6,border:"none",background:"#111",color:"#fff",fontSize:11,fontWeight:500,cursor:"pointer"}}>+ Asignar</button>
+                  </div>
+                  <div style={{fontSize:12,fontWeight:600,marginBottom:2}}>{c.name||"—"}</div>
+                  <div style={{fontSize:11,color:"#94a3b8"}}>{c.address}</div>
+                  <div style={{fontSize:11,color:"#6366f1",marginTop:3}}>📦 {prods}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* CENTER — Paradas */}
-        <div style={{overflowY:"auto",background:"#f5f2eb",padding:20}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",color:"#888"}}>Paradas sin asignar ({unassigned.length})</div>
-            <button style={btn("primary")} onClick={()=>setShowAdd(true)}>+ Agregar</button>
+        {/* Col 2: Ruta asignada */}
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>
+            Ruta de {driver.name} ({drvStops.length})
           </div>
-          {unassigned.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:13,padding:"32px 0"}}>✓ Todas asignadas</div>}
-          {[...unassigned].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>(
-            <div key={s.id} style={{background:"#fff",border:`2px solid ${s.priority==="urgente"?"#e8442a":s.priority==="alta"?"#f59e0b":"#1a1a1a"}`,borderRadius:8,padding:14,marginBottom:10}}>
-              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
-                <div>
-                  <span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:PC[s.priority],color:"#fff",display:"inline-block",marginBottom:7,textTransform:"uppercase"}}>{s.priority}</span>
-                  {[["📍 Dirección",s.address],["👤 Receptor",s.recipient],["📦 Paquete",s.package],["⏰ Límite",s.timeLimit+" hs"]].map(([l,v])=>(
-                    <div key={l} style={{fontSize:12,marginBottom:3,display:"flex",gap:5}}><span style={{color:"#888",minWidth:80,flexShrink:0}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
-                  ))}
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {drvStops.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin paradas asignadas</div>}
+            {drvStops.map((s,i)=>{
+              const c=clients.find(x=>x.id===s.clientId)||{};
+              const prods=s.products.map(p=>{ const pr=products.find(x=>x.id===p.productId); return pr?`${pr.name} ×${p.qty}`:""; }).join(", ");
+              return(
+                <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #e2e8f0",display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:i===0?"#6366f1":"#f1f5f9",color:i===0?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:1}}>{i===0?"●":i+1}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:4}}>
+                      <PTag p={s.priority}/>
+                      <span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
+                      <button onClick={()=>onUnassign(driver.id,s.id)} style={{marginLeft:"auto",background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer"}}>✕</button>
+                    </div>
+                    <div style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
+                    <div style={{fontSize:11,color:"#6366f1",marginTop:2}}>📦 {prods}</div>
+                  </div>
                 </div>
-                <button style={{...btn("primary"),fontSize:10,padding:"6px 10px",whiteSpace:"nowrap",flexShrink:0}} onClick={()=>assignStop(s.id)}>{selDrv?`→ ${selDrv.avatar}`:"Asignar"}</button>
-              </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Col 3: MAP */}
+        <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>
+            Mapa de ruta
+          </div>
+          <div style={{flex:1,padding:12}}>
+            {drvStops.length===0
+              ? <div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8}}><span style={{fontSize:36}}>🗺️</span>Asigná paradas para ver la ruta</div>
+              : <RouteMap stops={drvStops} clients={clients}/>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── MAIN APP ────────────────────────────────────────────────────────────── */
+function App(){
+  const init=load()||DEMO;
+  const [drivers,setDrivers]   = useState(init.drivers||DEMO.drivers);
+  const [clients,setClients]   = useState(init.clients||DEMO.clients);
+  const [products,setProducts] = useState(init.products||DEMO.products);
+  const [stops,setStops]       = useState(init.stops||DEMO.stops);
+  const [assign,setAssign]     = useState(init.assignments||{});
+
+  const [page,setPage]         = useState("dispatch"); // dispatch | clients | products
+  const [detailDrv,setDetailDrv] = useState(null);
+  const [aiRes,setAiRes]       = useState({});
+  const [optimizing,setOpt]    = useState(false);
+  const [toast,setToast]       = useState(null);
+
+  // Modals
+  const [modal,setModal]       = useState(null); // {type, data}
+  const [confirm,setConfirm]   = useState(null);
+
+  useEffect(()=>persist({drivers,clients,products,stops,assignments:assign}),[drivers,clients,products,stops,assign]);
+
+  const t_=(msg,type="ok")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+  const openModal=(type,data=null)=>setModal({type,data});
+  const closeModal=()=>setModal(null);
+
+  async function handleOptimize(driverId,drvStops){
+    setOpt(true);
+    try{
+      const r=await aiOptimize(drvStops,clients);
+      const ordered=r.optimizedOrder.map(i=>drvStops[i-1]?.id).filter(Boolean);
+      setAssign(a=>({...a,[driverId]:ordered}));
+      setAiRes(p=>({...p,[driverId]:r}));
+      t_("✓ Ruta optimizada con IA");
+    }catch{ t_("Error al optimizar","err"); }
+    setOpt(false);
+  }
+
+  function handleDispatch(driverId){
+    setDrivers(d=>d.map(x=>x.id===driverId?{...x,status:"en_ruta"}:x));
+    t_("Ruta despachada ✓");
+  }
+
+  const unassignedAll = stops.filter(s=>s.status!=="entregado"&&!Object.values(assign).flat().includes(s.id));
+
+  /* ── NAV ─────────────────────────────────────────────────────────────── */
+  const navItem=(id,label,icon)=>(
+    <button onClick={()=>setPage(id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:page===id?"#f1f5f9":"transparent",color:page===id?"#111":"#64748b",fontSize:13,fontWeight:page===id?600:400,width:"100%",textAlign:"left",cursor:"pointer"}}>
+      <span style={{fontSize:16}}>{icon}</span>{label}
+    </button>
+  );
+
+  return(
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
+
+      {/* HEADER */}
+      <header style={{height:54,background:"#fff",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:28,height:28,borderRadius:7,background:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>🚛</div>
+          <span style={{fontWeight:700,fontSize:15,letterSpacing:-.3}}>CachoFer</span>
+          <span style={{fontSize:11,color:"#94a3b8",background:"#f1f5f9",padding:"2px 8px",borderRadius:20}}>Central</span>
+        </div>
+        <div style={{marginLeft:"auto",display:"flex",gap:20,alignItems:"center"}}>
+          {[[stops.filter(s=>s.status!=="entregado").length,"pendientes","📦"],[stops.filter(s=>s.status==="entregado").length,"entregadas","✅"],[clients.length,"clientes","👤"],[products.length,"productos","🏷️"]].map(([v,l,ic])=>(
+            <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:13}}>{ic}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span><span style={{fontSize:11,color:"#94a3b8"}}>{l}</span>
             </div>
           ))}
-
-          {selDrv&&drvStops.length>0&&(
-            <>
-              <div style={{fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",color:"#888",marginTop:24,marginBottom:12}}>Asignadas a {selDrv.name} ({drvStops.length})</div>
-              {drvStops.map((s,i)=>(
-                <div key={s.id} style={{background:"#f0fdf4",border:`2px solid ${s.status==="entregado"?"#16a34a":PC[s.priority]}`,borderRadius:8,padding:14,marginBottom:10,opacity:s.status==="entregado"?0.55:1}}>
-                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
-                    <div>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                        <span style={{fontWeight:700,fontSize:14}}>#{i+1}</span>
-                        <span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:PC[s.priority],color:"#fff",textTransform:"uppercase"}}>{s.priority}</span>
-                        {s.status==="entregado"&&<span style={{fontSize:9,fontWeight:700,letterSpacing:2,padding:"2px 8px",borderRadius:3,background:"#16a34a",color:"#fff"}}>✓ ENTREGADO</span>}
-                      </div>
-                      {[["📍",s.address],["👤",s.recipient],["📦",s.package],["⏰",s.timeLimit+" hs"]].map(([l,v])=>(
-                        <div key={l} style={{fontSize:12,marginBottom:3,display:"flex",gap:5}}><span style={{color:"#888",minWidth:20}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
-                      ))}
-                    </div>
-                    <button style={{...btn("ghost"),fontSize:10,padding:"5px 10px"}} onClick={()=>unassignStop(s.id)}>✕</button>
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
         </div>
+      </header>
 
-        {/* RIGHT — Optimizador */}
-        <div style={{borderLeft:"2px solid #1a1a1a",background:"#1a1a1a",color:"#f5f2eb",overflowY:"auto",display:"flex",flexDirection:"column"}}>
-          <div style={{padding:"12px 18px",borderBottom:"2px solid #2d2d2d",fontSize:10,fontWeight:700,letterSpacing:3,textTransform:"uppercase",background:"#111",color:"#f5f2eb",flexShrink:0}}>🤖 Optimizador IA</div>
+      {/* BODY */}
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"200px 1fr",overflow:"hidden"}}>
 
-          {!selDrv?(
-            <div style={{padding:24,color:"#444",fontSize:13,textAlign:"center",marginTop:48}}>← Seleccioná un chofer</div>
-          ):(
-            <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-              <div style={{padding:"12px 18px",borderBottom:"1px solid #2d2d2d"}}>
-                <div style={{fontSize:11,color:"#666",marginBottom:3}}>Chofer seleccionado</div>
-                <div style={{fontWeight:700,fontSize:15}}>{selDrv.name}</div>
-                <div style={{fontSize:11,color:"#555"}}>{selDrv.id} · {drvStops.length} paradas</div>
+        {/* SIDEBAR */}
+        <nav style={{background:"#fff",borderRight:"1px solid #f1f5f9",padding:"12px 10px",display:"flex",flexDirection:"column",gap:2}}>
+          {navItem("dispatch","Despacho","🚛")}
+          {navItem("clients","Clientes","👤")}
+          {navItem("products","Productos","📦")}
+          <div style={{flex:1}}/>
+          <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px",letterSpacing:.5}}>v3.0 · CachoFer</div>
+        </nav>
+
+        {/* CONTENT */}
+        <div style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
+
+          {/* ── DISPATCH PAGE ──────────────────────────────────────────── */}
+          {page==="dispatch"&&(
+            <div style={{flex:1,display:"grid",gridTemplateColumns:"240px 1fr",overflow:"hidden"}}>
+
+              {/* Choferes */}
+              <div style={{borderRight:"1px solid #f1f5f9",background:"#fff",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                <div style={{padding:"14px 14px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5}}>Choferes</span>
+                  <button onClick={()=>openModal("addDriver")} style={{width:24,height:24,borderRadius:6,background:"#111",border:"none",color:"#fff",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>+</button>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px"}}>
+                  {drivers.map(dr=>{
+                    const cnt=(assign[dr.id]||[]).length;
+                    return(
+                      <div key={dr.id} onClick={()=>setDetailDrv(dr)}
+                        style={{display:"flex",alignItems:"center",gap:10,padding:"10px",borderRadius:10,cursor:"pointer",marginBottom:2,border:"1px solid transparent",transition:"all .15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background="#f8fafc";e.currentTarget.style.borderColor="#e2e8f0";}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>
+                        <div style={{width:36,height:36,borderRadius:10,background:dr.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dr.name}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",marginTop:1,display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:dr.status==="en_ruta"?"#10b981":"#e2e8f0",display:"inline-block"}}/>
+                            {dr.status==="en_ruta"?"En ruta":"Disponible"} · <span style={{color:cnt>0?"#6366f1":"#94a3b8"}}>{cnt}</span>
+                          </div>
+                        </div>
+                        <span style={{fontSize:11,color:"#cbd5e1"}}>→</span>
+                      </div>
+                    );
+                  })}
+                  {drivers.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin choferes. Creá uno con +</div>}
+                </div>
+                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",flexShrink:0}}>
+                  {[["Sin asignar",unassignedAll.length],["Urgentes",stops.filter(s=>s.priority==="urgente"&&s.status!=="entregado").length]].map(([l,v])=>(
+                    <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style={{color:"#94a3b8"}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
+                  ))}
+                </div>
               </div>
 
-              {optResult&&(
-                <div style={{background:"#0f0f0f",border:"1px solid #2d2d2d",borderRadius:6,margin:"14px 16px",padding:14}}>
-                  <div style={{fontSize:9,fontWeight:700,letterSpacing:2,color:"#e8442a",marginBottom:10}}>IA — RESULTADO</div>
-                  <div style={{display:"flex",gap:20,marginBottom:10}}>
-                    <div><div style={{fontSize:9,color:"#555"}}>DISTANCIA</div><div style={{fontSize:20,fontWeight:700,color:"#16a34a"}}>{optResult.estimatedTotalKm} km</div></div>
-                    <div><div style={{fontSize:9,color:"#555"}}>TIEMPO</div><div style={{fontSize:20,fontWeight:700,color:"#f59e0b"}}>{optResult.estimatedTotalMinutes} min</div></div>
-                  </div>
-                  <div style={{fontSize:12,color:"#aaa",lineHeight:1.6,marginBottom:8}}>{optResult.reasoning}</div>
-                  {optResult.warnings?.map((w,i)=><div key={i} style={{fontSize:11,color:"#e8442a"}}>⚠ {w}</div>)}
+              {/* Paradas sin asignar */}
+              <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+                <div style={{padding:"14px 16px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"#fff",borderBottom:"1px solid #f1f5f9"}}>
+                  <span style={{fontSize:13,fontWeight:600}}>Paradas sin asignar <span style={{color:"#94a3b8",fontWeight:400}}>({unassignedAll.length})</span></span>
+                  <Btn onClick={()=>openModal("addStop")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nueva parada</Btn>
                 </div>
-              )}
+                <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+                  {unassignedAll.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:48}}>✓ Todas las paradas están asignadas</div>}
+                  {[...unassignedAll].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+                    const c=clients.find(x=>x.id===s.clientId)||{};
+                    const prods=s.products.map(p=>{ const pr=products.find(x=>x.id===p.productId); return pr?`${pr.name} ×${p.qty}`:"?"; }).join(", ");
+                    return(
+                      <div key={s.id} style={{background:"#fff",borderRadius:12,padding:"13px 15px",marginBottom:8,border:"1px solid #f1f5f9",transition:"box-shadow .15s",position:"relative"}}
+                        onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 10px rgba(0,0,0,0.06)"}
+                        onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                        <div style={{position:"absolute",left:0,top:12,bottom:12,width:3,borderRadius:4,background:PC[s.priority]}}/>
+                        <div style={{paddingLeft:8}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
+                            <PTag p={s.priority}/>
+                            <span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.timeLimit}</span>
+                            <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+                              <button onClick={()=>openModal("editStop",s)} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                              <button onClick={()=>setConfirm({msg:`¿Eliminar parada de ${c.name}?`,fn:()=>{setStops(p=>p.filter(x=>x.id!==s.id));setAssign(a=>{const c={...a};for(const k in c)c[k]=c[k].filter(i=>i!==s.id);return c;});t_("Parada eliminada");}})} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
+                            </div>
+                          </div>
+                          <div style={{fontSize:13,fontWeight:600,marginBottom:3}}>{c.name||"Cliente no encontrado"}</div>
+                          <div style={{fontSize:12,color:"#64748b",marginBottom:4}}>{c.address}</div>
+                          <div style={{fontSize:12,color:"#6366f1"}}>📦 {prods}</div>
+                          {s.notes&&<div style={{fontSize:11,color:"#94a3b8",marginTop:3}}>📝 {s.notes}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
-              <div style={{flex:1,overflowY:"auto"}}>
-                {drvStops.length===0?(
-                  <div style={{padding:20,color:"#444",fontSize:13,textAlign:"center"}}>Sin paradas asignadas</div>
-                ):drvStops.map((s,i)=>(
-                  <div key={s.id} style={{padding:"12px 18px",borderBottom:"1px solid #1f1f1f",display:"flex",gap:10,alignItems:"flex-start"}}>
-                    <div style={{width:26,height:26,borderRadius:"50%",border:`2px solid ${i===0?"#e8442a":"#333"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:i===0?"#e8442a":"#555",flexShrink:0}}>{i===0?"●":i+1}</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:700,fontSize:12,marginBottom:3}}>{s.address}</div>
-                      <div style={{fontSize:11,color:"#666"}}>{s.recipient}</div>
-                      <div style={{display:"flex",gap:6,marginTop:4,alignItems:"center"}}>
-                        <span style={{fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:2,background:PC[s.priority],color:"#fff",textTransform:"uppercase"}}>{s.priority}</span>
-                        <span style={{fontSize:10,color:"#555"}}>⏰ {s.timeLimit}</span>
+          {/* ── CLIENTS PAGE ────────────────────────────────────────────── */}
+          {page==="clients"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Clientes <span style={{color:"#94a3b8",fontWeight:400}}>({clients.length})</span></span>
+                <Btn onClick={()=>openModal("addClient")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo cliente</Btn>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+                  {clients.map(c=>(
+                    <div key={c.id} style={{background:"#fff",borderRadius:12,padding:"16px",border:"1px solid #f1f5f9",animation:"fadeIn .2s ease"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                        <div style={{width:38,height:38,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#6366f1"}}>{initials(c.name)}</div>
+                        <div style={{display:"flex",gap:5}}>
+                          <button onClick={()=>openModal("editClient",c)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                          <button onClick={()=>setConfirm({msg:`¿Eliminar cliente ${c.name}?`,fn:()=>{setClients(p=>p.filter(x=>x.id!==c.id));t_("Cliente eliminado");}})} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
+                        </div>
+                      </div>
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{c.name}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:3}}>📍 {c.address}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:c.notes?3:0}}>📞 {c.phone||"—"}</div>
+                      {c.notes&&<div style={{fontSize:11,color:"#94a3b8",marginTop:4,padding:"4px 8px",background:"#f8fafc",borderRadius:6}}>📝 {c.notes}</div>}
+                      <div style={{fontSize:10,color:"#cbd5e1",marginTop:6}}>{c.id}{c.lat?` · ${c.lat},${c.lng}`:""}</div>
+                    </div>
+                  ))}
+                  {clients.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin clientes. Creá uno con el botón +</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── PRODUCTS PAGE ───────────────────────────────────────────── */}
+          {page==="products"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Productos <span style={{color:"#94a3b8",fontWeight:400}}>({products.length})</span></span>
+                <Btn onClick={()=>openModal("addProduct")} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo producto</Btn>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+                  {products.map(p=>(
+                    <div key={p.id} style={{background:"#fff",borderRadius:12,padding:"14px",border:"1px solid #f1f5f9",display:"flex",gap:12,alignItems:"center",animation:"fadeIn .2s ease"}}>
+                      <div style={{width:40,height:40,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📦</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
+                        <div style={{fontSize:11,color:"#94a3b8"}}>{p.desc}</div>
+                        <div style={{fontSize:10,color:"#6366f1",marginTop:2,fontWeight:500}}>/{p.unit}</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        <button onClick={()=>openModal("editProduct",p)} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                        <button onClick={()=>setConfirm({msg:`¿Eliminar "${p.name}"?`,fn:()=>{setProducts(x=>x.filter(y=>y.id!==p.id));t_("Producto eliminado");}})} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{padding:"14px 16px",borderTop:"1px solid #2d2d2d",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
-                <button style={{padding:"11px",borderRadius:5,border:"2px solid #333",background:"#222",color:"#f5f2eb",fontFamily:"inherit",fontWeight:700,fontSize:11,letterSpacing:1,textTransform:"uppercase",opacity:optimizing?0.5:1}} onClick={optimize} disabled={optimizing||drvStops.length<2}>
-                  {optimizing?"⏳ Optimizando...":"🤖 Optimizar con IA"}
-                </button>
-                <button style={{...btn("danger"),padding:"11px",width:"100%"}} onClick={dispatch} disabled={drvStops.length===0}>🚀 Despachar Ruta</button>
+                  ))}
+                  {products.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin productos. Creá uno con el botón +</div>}
+                </div>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {showAdd&&<AddModal onClose={()=>setShowAdd(false)} onAdd={s=>{setStops(p=>[...p,s]);toast_("Parada agregada","ok");}} />}
-      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#e8442a":"#16a34a",color:"#fff",padding:"11px 22px",borderRadius:6,fontSize:13,fontWeight:600,boxShadow:"0 4px 18px rgba(0,0,0,0.3)",zIndex:200,animation:"fadeIn .2s ease"}}>{toast.msg}</div>}
+      {/* ── DRIVER DETAIL OVERLAY ─────────────────────────────────────────── */}
+      {detailDrv&&(
+        <DriverDetail
+          driver={detailDrv}
+          stops={stops}
+          clients={clients}
+          products={products}
+          assign={assign}
+          allStops={stops}
+          aiRes={aiRes[detailDrv.id]}
+          optimizing={optimizing}
+          onAssign={(did,sid)=>setAssign(a=>({...a,[did]:[...(a[did]||[]),sid]}))}
+          onUnassign={(did,sid)=>setAssign(a=>({...a,[did]:(a[did]||[]).filter(i=>i!==sid)}))}
+          onOptimize={handleOptimize}
+          onDispatch={handleDispatch}
+          onClose={()=>setDetailDrv(null)}
+        />
+      )}
+
+      {/* ── MODALS ────────────────────────────────────────────────────────── */}
+      {modal?.type==="addStop"    && <StopModal    clients={clients} products={products} onClose={closeModal} onSave={s=>{setStops(p=>[...p,s]);t_("Parada agregada");}}/>}
+      {modal?.type==="editStop"   && <StopModal    initial={modal.data} clients={clients} products={products} onClose={closeModal} onSave={s=>{setStops(p=>p.map(x=>x.id===s.id?s:x));t_("Parada actualizada");}}/>}
+      {modal?.type==="addClient"  && <ClientModal  onClose={closeModal} onSave={c=>{setClients(p=>[...p,c]);t_("Cliente creado");}}/>}
+      {modal?.type==="editClient" && <ClientModal  initial={modal.data} onClose={closeModal} onSave={c=>{setClients(p=>p.map(x=>x.id===c.id?c:x));t_("Cliente actualizado");}}/>}
+      {modal?.type==="addProduct" && <ProductModal onClose={closeModal} onSave={p=>{setProducts(x=>[...x,p]);t_("Producto creado");}}/>}
+      {modal?.type==="editProduct"&& <ProductModal initial={modal.data} onClose={closeModal} onSave={p=>{setProducts(x=>x.map(y=>y.id===p.id?p:y));t_("Producto actualizado");}}/>}
+      {modal?.type==="addDriver"  && <DriverModal  allDrivers={drivers} onClose={closeModal} onSave={d=>{setDrivers(p=>[...p,d]);t_(`Chofer ${d.name} creado`);}}/>}
+
+      {confirm && <Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
+
+      {/* ── TOAST ─────────────────────────────────────────────────────────── */}
+      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
