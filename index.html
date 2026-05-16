@@ -600,19 +600,22 @@ function App() {
                   {drivers.map(dr => {
                     const cnt = (assign[dr.id] || []).length;
                     return (
-                      <div key={dr.id} onClick={() => setDetailDrv(dr)}
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px", borderRadius: 10, cursor: "pointer", marginBottom: 2, border: "1px solid transparent", transition: "all .15s" }}
+                      <div key={dr.id}
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px", borderRadius: 10, marginBottom: 2, border: "1px solid transparent", transition: "all .15s" }}
                         onMouseEnter={e => { e.currentTarget.style.background = "#f8fafc"; e.currentTarget.style.borderColor = "#e2e8f0"; }}
                         onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: dr.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{dr.avatar}</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div onClick={() => setDetailDrv(dr)} style={{ width: 36, height: 36, borderRadius: 10, background: dr.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0, cursor: "pointer" }}>{dr.avatar}</div>
+                        <div onClick={() => setDetailDrv(dr)} style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
                           <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dr.name}</div>
                           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: dr.status === "en_ruta" ? "#10b981" : "#e2e8f0", display: "inline-block" }} />
-                            {dr.status === "en_ruta" ? "En ruta" : "Disponible"} · <span style={{ color: cnt > 0 ? "#6366f1" : "#94a3b8" }}>{cnt} paradas</span>
+                            {dr.status === "en_ruta" ? "En ruta" : "Disponible"} · <span style={{ color: cnt > 0 ? "#6366f1" : "#94a3b8" }}>{cnt}</span>
                           </div>
                         </div>
-                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>→</span>
+                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                          <button onClick={e => { e.stopPropagation(); openModal("editDriver", dr); }} title="Editar" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #e2e8f0", background: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✏️</button>
+                          <button onClick={e => { e.stopPropagation(); setConfirm({ msg: `¿Eliminar al chofer ${dr.name}? Sus paradas quedarán sin asignar.`, fn: () => { setDrivers(p => p.filter(x => x.id !== dr.id)); setAssign(a => { const cp = { ...a }; delete cp[dr.id]; return cp; }); if (detailDrv?.id === dr.id) setDetailDrv(null); t_(`${dr.name} eliminado`); } }); }} title="Eliminar" style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #fee2e2", background: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>🗑️</button>
+                        </div>
                       </div>
                     );
                   })}
@@ -750,6 +753,7 @@ function App() {
       {modal?.type === "addProduct"  && <ProductModal onClose={closeModal} onSave={p => { setProducts(x => [...x, p]); t_("Producto creado"); }} />}
       {modal?.type === "editProduct" && <ProductModal initial={modal.data} onClose={closeModal} onSave={p => { setProducts(x => x.map(y => y.id === p.id ? p : y)); t_("Producto actualizado"); }} />}
       {modal?.type === "addDriver"   && <DriverModal  allDrivers={drivers} onClose={closeModal} onSave={d => { setDrivers(p => [...p, d]); t_(`Chofer ${d.name} creado`); }} />}
+      {modal?.type === "editDriver"  && <DriverModal  initial={modal.data} allDrivers={drivers} onClose={closeModal} onSave={d => { setDrivers(p => p.map(x => x.id === d.id ? d : x)); t_("Chofer actualizado"); }} />}
 
       {confirm && <Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={() => setConfirm(null)} />}
 
