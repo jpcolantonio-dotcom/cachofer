@@ -579,40 +579,75 @@ function App(){
 
   // DRIVERS
   async function saveDriver(d){
-    if(drivers.find(x=>x.id===d.id)) await sb.from("drivers").update(d).eq("id",d.id);
-    else await sb.from("drivers").insert(d);
-    t_(d.name+" guardado");
+    if(drivers.find(x=>x.id===d.id)){
+      await sb.from("drivers").update(d).eq("id",d.id);
+      setDrivers(p=>p.map(x=>x.id===d.id?d:x));
+      if(detailDrv?.id===d.id) setDetailDrv(d);
+    } else {
+      await sb.from("drivers").insert(d);
+      setDrivers(p=>[...p,d].sort((a,b)=>a.name.localeCompare(b.name)));
+    }
+    t_(d.name+" guardado ✓");
   }
   async function deleteDriver(id){
     await sb.from("stops").update({driver_id:null}).eq("driver_id",id);
     await sb.from("drivers").delete().eq("id",id);
-    if(detailDrv?.id===id)setDetailDrv(null);
+    setDrivers(p=>p.filter(x=>x.id!==id));
+    setStops(p=>p.map(s=>s.driver_id===id?{...s,driver_id:null}:s));
+    if(detailDrv?.id===id) setDetailDrv(null);
     t_("Chofer eliminado");
   }
 
   // CLIENTS
   async function saveClient(c){
-    if(clients.find(x=>x.id===c.id)) await sb.from("clients").update(c).eq("id",c.id);
-    else await sb.from("clients").insert(c);
-    t_("Cliente guardado");
+    if(clients.find(x=>x.id===c.id)){
+      await sb.from("clients").update(c).eq("id",c.id);
+      setClients(p=>p.map(x=>x.id===c.id?c:x));
+    } else {
+      await sb.from("clients").insert(c);
+      setClients(p=>[...p,c].sort((a,b)=>a.name.localeCompare(b.name)));
+    }
+    t_("Cliente guardado ✓");
   }
-  async function deleteClient(id){ await sb.from("clients").delete().eq("id",id); t_("Cliente eliminado"); }
+  async function deleteClient(id){
+    await sb.from("clients").delete().eq("id",id);
+    setClients(p=>p.filter(x=>x.id!==id));
+    t_("Cliente eliminado");
+  }
 
   // PRODUCTS
   async function saveProduct(p){
-    if(products.find(x=>x.id===p.id)) await sb.from("products").update(p).eq("id",p.id);
-    else await sb.from("products").insert(p);
-    t_("Producto guardado");
+    if(products.find(x=>x.id===p.id)){
+      await sb.from("products").update(p).eq("id",p.id);
+      setProducts(x=>x.map(y=>y.id===p.id?p:y));
+    } else {
+      await sb.from("products").insert(p);
+      setProducts(x=>[...x,p].sort((a,b)=>a.name.localeCompare(b.name)));
+    }
+    t_("Producto guardado ✓");
   }
-  async function deleteProduct(id){ await sb.from("products").delete().eq("id",id); t_("Producto eliminado"); }
+  async function deleteProduct(id){
+    await sb.from("products").delete().eq("id",id);
+    setProducts(x=>x.filter(y=>y.id!==id));
+    t_("Producto eliminado");
+  }
 
   // STOPS
   async function saveStop(s){
-    if(stops.find(x=>x.id===s.id)) await sb.from("stops").update(s).eq("id",s.id);
-    else await sb.from("stops").insert(s);
-    t_("Parada guardada");
+    if(stops.find(x=>x.id===s.id)){
+      await sb.from("stops").update(s).eq("id",s.id);
+      setStops(p=>p.map(x=>x.id===s.id?s:x));
+    } else {
+      await sb.from("stops").insert(s);
+      setStops(p=>[...p,s]);
+    }
+    t_("Parada guardada ✓");
   }
-  async function deleteStop(id){ await sb.from("stops").delete().eq("id",id); t_("Parada eliminada"); }
+  async function deleteStop(id){
+    await sb.from("stops").delete().eq("id",id);
+    setStops(p=>p.filter(x=>x.id!==id));
+    t_("Parada eliminada");
+  }
 
   async function handleOptimize(driverId,drvStops){
     if(drvStops.length<2){t_("Necesitás al menos 2 paradas");return;}
