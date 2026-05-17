@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -124,32 +125,141 @@ function buildMapsUrl(stops, clients, depot=null){
 }
 
 /* ── LEAFLET MAP ─────────────────────────────────────────────────────────── */
-function RouteMap({stops,clients,depot=null}){
+/* ── LEAFLET MAP HELPERS ─────────────────────────────────────────────────── */
+function initMap(ref, center=[-34.61,-58.38], zoom=13){
+  const map = L.map(ref, {zoomControl:true, attributionControl:false}).setView(center, zoom);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+  return map;
+}
+
+// Mapa de ruta de un chofer (columna derecha en pantalla de chofer)
+function RouteMap({stops,clients,depot=null,driverColor="#6366f1"}){
   const ref=useRef(null); const mapRef=useRef(null);
   useEffect(()=>{
-    if(!ref.current)return;
+    if(!ref.current) return;
     if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
-    const map=L.map(ref.current,{zoomControl:true}).setView([-34.61,-58.38],13);
+    const map=initMap(ref.current);
     mapRef.current=map;
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OSM",maxZoom:19}).addTo(map);
-    // Depot marker
-    if(depot?.lat&&depot?.lng){
-      const dIcon=L.divIcon({className:"",html:`<div style="width:36px;height:36px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3)">🏭</div>`,iconSize:[36,36],iconAnchor:[18,18]});
-      L.marker([depot.lat,depot.lng],{icon:dIcon}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b><br>${depot.address}<br><span style="color:#888;font-size:11px">Punto de partida</span>`);
-    }
+
     const pts=[];
+
+    // Depósito
+    if(depot?.lat&&depot?.lng){
+      pts.push([depot.lat,depot.lng]);
+      const dIcon=L.divIcon({className:"",html:`<div style="width:34px;height:34px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3)">🏭</div>`,iconSize:[34,34],iconAnchor:[17,17]});
+      L.marker([depot.lat,depot.lng],{icon:dIcon}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b><br><span style="font-size:11px">${depot.address}</span>`);
+    }
+
+    // Paradas
     stops.forEach((s,i)=>{
       const c=clients.find(x=>x.id===s.client_id);
-      if(!c||!c.lat||!c.lng)return;
+      if(!c?.lat||!c?.lng) return;
       pts.push([c.lat,c.lng]);
-      const icon=L.divIcon({className:"",html:`<div style="width:32px;height:32px;border-radius:50%;background:${PC[s.priority]};color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:Inter,sans-serif">${i+1}</div>`,iconSize:[32,32],iconAnchor:[16,16]});
-      L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<b>#${i+1} — ${c.name}</b><br>${c.address}<br><span style="color:${PC[s.priority]};font-size:11px">⏰ ${s.time_limit} · ${s.priority}</span>`);
+      const bg=s.status==="entregado"?"#10b981":PC[s.priority];
+      const label=s.status==="entregado"?"✓":String(i+1);
+      const icon=L.divIcon({className:"",html:`<div style="width:30px;height:30px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.25);font-family:Inter,sans-serif">${label}</div>`,iconSize:[30,30],iconAnchor:[15,15]});
+      L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<div style="font-family:Inter,sans-serif"><b>#${i+1} — ${c.name}</b><br>${c.address}<br><span style="color:${bg};font-size:11px">⏰ ${s.time_limit} · ${s.priority}${s.status==="entregado"?" · ✓ Entregado":""}</span></div>`);
     });
-    if(pts.length>1){L.polyline(pts,{color:"#6366f1",weight:3,dashArray:"7,5",opacity:.65}).addTo(map);map.fitBounds(pts,{padding:[32,32]});}
-    else if(pts.length===1)map.setView(pts[0],15);
+
+    if(pts.length>1){
+      L.polyline(pts,{color:driverColor,weight:3,dashArray:"7,5",opacity:.7}).addTo(map);
+      map.fitBounds(pts,{padding:[36,36]});
+    } else if(pts.length===1){
+      map.setView(pts[0],15);
+    } else {
+      // Sin coordenadas: mostrar mensaje
+      map.setView([-34.61,-58.38],12);
+    }
+
+    setTimeout(()=>map.invalidateSize(),100);
     return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
-  },[stops,clients]);
+  },[stops,clients,depot,driverColor]);
   return <div ref={ref} style={{width:"100%",height:"100%",minHeight:300,borderRadius:10}}/>;
+}
+
+// Mapa TV: todas las camionetas juntas
+function AllDriversMap({drivers,stops,clients,depot,workDate,onClose}){
+  const ref=useRef(null); const mapRef=useRef(null);
+  const DRIVER_COLORS=["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#84cc16"];
+
+  useEffect(()=>{
+    if(!ref.current) return;
+    if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+    const map=initMap(ref.current,[-34.61,-58.38],12);
+    mapRef.current=map;
+    const allPts=[];
+
+    // Depósito
+    if(depot?.lat&&depot?.lng){
+      allPts.push([depot.lat,depot.lng]);
+      const dIcon=L.divIcon({className:"",html:`<div style="width:38px;height:38px;border-radius:10px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;border:2.5px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.4)">🏭</div>`,iconSize:[38,38],iconAnchor:[19,19]});
+      L.marker([depot.lat,depot.lng],{icon:dIcon}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b>`);
+    }
+
+    drivers.forEach((dr,di)=>{
+      const color=dr.color||DRIVER_COLORS[di%DRIVER_COLORS.length];
+      const drvStops=[...stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
+      if(!drvStops.length) return;
+
+      const drvPts=[];
+      drvStops.forEach((s,i)=>{
+        const c=clients.find(x=>x.id===s.client_id);
+        if(!c?.lat||!c?.lng) return;
+        drvPts.push([c.lat,c.lng]);
+        allPts.push([c.lat,c.lng]);
+        const done=s.status==="entregado";
+        const bg=done?"#10b981":color;
+        const icon=L.divIcon({className:"",html:`<div style="width:28px;height:28px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);font-family:Inter,sans-serif">${done?"✓":i+1}</div>`,iconSize:[28,28],iconAnchor:[14,14]});
+        L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<div style="font-family:Inter,sans-serif"><b style="color:${color}">${dr.name}</b><br>#${i+1} — ${c.name}<br><span style="font-size:11px">${c.address}</span><br><span style="color:${bg};font-size:11px">⏰ ${s.time_limit}${done?" · ✓ Entregado":""}</span></div>`);
+      });
+
+      if(drvPts.length>1){
+        // Línea de ruta con color del chofer
+        L.polyline(drvPts,{color,weight:3,dashArray:"8,5",opacity:.75}).addTo(map);
+        // Etiqueta con nombre del chofer en la primera parada
+        const [lat,lng]=drvPts[0];
+        const labelIcon=L.divIcon({className:"",html:`<div style="background:${color};color:#fff;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.25);border:1.5px solid #fff">${dr.name}</div>`,iconSize:[0,0],iconAnchor:[-4,14]});
+        L.marker([lat,lng],{icon:labelIcon,interactive:false}).addTo(map);
+      }
+    });
+
+    if(allPts.length>1) map.fitBounds(allPts,{padding:[40,40]});
+    setTimeout(()=>map.invalidateSize(),150);
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[drivers,stops,clients,depot,workDate]);
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#111",zIndex:600,display:"flex",flexDirection:"column"}}>
+      {/* Header TV */}
+      <div style={{height:52,background:"#0f0f0f",borderBottom:"1px solid #1f1f1f",display:"flex",alignItems:"center",padding:"0 20px",gap:16,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:26,height:26,borderRadius:6,background:"#111",border:"1px solid #333",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>🚛</div>
+          <span style={{fontWeight:700,fontSize:14,letterSpacing:-.3,color:"#fff"}}>CA-Chofer</span>
+          <span style={{fontSize:11,color:"#555",background:"#1a1a1a",padding:"2px 8px",borderRadius:20}}>Vista TV — Todas las rutas</span>
+        </div>
+        {/* Leyenda choferes */}
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginLeft:8}}>
+          {drivers.filter(dr=>stops.some(s=>s.driver_id===dr.id&&s.work_date===workDate)).map((dr,i)=>{
+            const color=dr.color||["#6366f1","#f59e0b","#10b981","#ef4444"][i%4];
+            const cnt=stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate).length;
+            const done=stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate&&s.status==="entregado").length;
+            return(
+              <div key={dr.id} style={{display:"flex",alignItems:"center",gap:6,padding:"3px 10px",borderRadius:20,border:`1.5px solid ${color}`,background:`${color}22`}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:color,display:"inline-block"}}/>
+                <span style={{fontSize:12,fontWeight:600,color:"#fff"}}>{dr.name}</span>
+                <span style={{fontSize:10,color:"#888"}}>{done}/{cnt}</span>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={onClose} style={{marginLeft:"auto",background:"#1a1a1a",border:"1px solid #333",borderRadius:8,padding:"6px 14px",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+          ✕ Cerrar
+        </button>
+      </div>
+      {/* Mapa fullscreen */}
+      <div ref={ref} style={{flex:1}}/>
+    </div>
+  );
 }
 
 /* ── UI PRIMITIVES ───────────────────────────────────────────────────────── */
@@ -229,19 +339,53 @@ function StopModal({initial,clients,products,workDate,onClose,onSave}){
 
 function ClientModal({initial,onClose,onSave}){
   const [f,setF]=useState(initial||{name:"",address:"",phone:"",notes:"",lat:"",lng:""});
+  const [geocoding,setGeocoding]=useState(false);
+  const [geoMsg,setGeoMsg]=useState("");
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  async function autoGeocode(){
+    if(!f.address) return;
+    setGeocoding(true); setGeoMsg("");
+    try{
+      const query=encodeURIComponent(f.address);
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,{headers:{"Accept-Language":"es","User-Agent":"CachoFer/1.0"}});
+      const d=await r.json();
+      if(d.length>0){
+        setF(p=>({...p,lat:parseFloat(d[0].lat).toFixed(6),lng:parseFloat(d[0].lon).toFixed(6)}));
+        setGeoMsg("✓ Coordenadas encontradas: "+d[0].display_name.split(",").slice(0,2).join(","));
+      } else {
+        setGeoMsg("⚠ No se encontró la dirección. Probá con más detalle.");
+      }
+    }catch(e){
+      setGeoMsg("⚠ Error al buscar. Verificá tu conexión.");
+    }
+    setGeocoding(false);
+  }
+
   return(
-    <Modal onClose={onClose} w={460}>
+    <Modal onClose={onClose} w={480}>
       <MHead title={initial?.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}/>
       <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Nombre o razón social"/></Field>
-      <Field label="Dirección"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires"/></Field>
+      <Field label="Dirección">
+        <div style={{display:"flex",gap:8}}>
+          <input value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires"
+            style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/>
+          <button onClick={autoGeocode} disabled={geocoding||!f.address}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:geocoding?"#f1f5f9":"#111",color:geocoding?"#94a3b8":"#fff",fontSize:12,fontWeight:500,cursor:geocoding||!f.address?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {geocoding?"Buscando…":"📍 Buscar"}
+          </button>
+        </div>
+        {geoMsg&&<div style={{fontSize:11,marginTop:5,color:geoMsg.startsWith("✓")?"#10b981":"#f59e0b",lineHeight:1.4}}>{geoMsg}</div>}
+      </Field>
       <Field label="Teléfono"><Inp value={f.phone} onChange={e=>s("phone",e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
-      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
+      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:60}}/></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-34.6037"/></Field>
         <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-58.3816"/></Field>
       </div>
-      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>Coordenadas opcionales para el mapa.</div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:14,marginTop:-8}}>
+        Ponés la dirección exacta y tocás 📍 Buscar — las coordenadas se cargan solas.
+      </div>
       <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
         <Btn onClick={onClose}>Cancelar</Btn>
         <Btn onClick={()=>{if(!f.name||!f.address)return;onSave({...f,id:initial?.id||"CL"+Date.now(),lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.name||!f.address}>{initial?.id?"Guardar":"Crear cliente"}</Btn>
@@ -490,8 +634,12 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
           </div>
           <div style={{flex:1,padding:10}}>
             {drvStops.length===0
-              ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8}}><span style={{fontSize:40}}>🗺️</span>Asigná paradas para ver la ruta</div>
-              :<RouteMap stops={drvStops} clients={clients} depot={depot}/>
+              ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:10,textAlign:"center",padding:20}}>
+                  <span style={{fontSize:40}}>🗺️</span>
+                  <span>Asigná paradas para ver la ruta</span>
+                  <span style={{fontSize:11,color:"#e2e8f0"}}>Los clientes necesitan coordenadas<br/>(lat/lng) para aparecer en el mapa</span>
+                </div>
+              :<RouteMap stops={drvStops} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"}/>
             }
           </div>
         </div>
@@ -541,6 +689,7 @@ function App(){
   const [modal,setModal]       = useState(null);
   const [confirm,setConfirm]   = useState(null);
   const [showHistory,setShowHistory] = useState(false);
+  const [showTV,setShowTV]             = useState(false);
   const [depot,setDepot]           = useState(()=>{ try{return JSON.parse(localStorage.getItem("cachofer_depot"))||{name:"",address:"",lat:"",lng:""};}catch{return{name:"",address:"",lat:"",lng:""};} });
 
   function saveDepot(d){ setDepot(d); localStorage.setItem("cachofer_depot",JSON.stringify(d)); t_("Depósito guardado ✓"); }
@@ -705,6 +854,10 @@ function App(){
             <button onClick={()=>setShowHistory(true)}
               style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#64748b",cursor:"pointer"}}>
               🗂️ Historial
+            </button>
+            <button onClick={()=>setShowTV(true)}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#111",cursor:"pointer"}}>
+              📺 Vista TV
             </button>
             <button onClick={()=>setModal({type:"depot"})}
               style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:`1.5px solid ${depot?.address?"#bbf7d0":"#fee2e2"}`,background:depot?.address?"#f0fdf4":"#fff",fontSize:12,fontWeight:500,color:depot?.address?"#16a34a":"#ef4444",cursor:"pointer"}} title="Configurar depósito de salida">
@@ -901,6 +1054,7 @@ function App(){
       {modal?.type==="editDriver" && <DriverModal initial={modal.data} allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
       {modal?.type==="depot" && <DepotModal initial={depot} onClose={()=>setModal(null)} onSave={saveDepot}/>}
 
+      {showTV&&<AllDriversMap drivers={drivers} stops={stops} clients={clients} depot={depot} workDate={workDate} onClose={()=>setShowTV(false)}/>}
       {confirm&&<Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
       {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
