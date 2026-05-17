@@ -4,34 +4,158 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CachoFer — Central</title>
-<script sr// Mapa TV: todas las camionetas — refresh cada 5s, ruta desde depósito, leyenda
-function AllDriversMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
-  const ref=useRef(null); const mapRef=useRef(null);
-  const layersRef=useRef([]); const [tick,setTick]=useState(0);
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100vh;overflow:hidden;background:#f8f9fa}
+body{font-family:'Inter',sans-serif;color:#111;-webkit-font-smoothing:antialiased}
+button{font-family:'Inter',sans-serif;cursor:pointer}
+input,select,textarea{font-family:'Inter',sans-serif}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:4px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ── SUPABASE REST ───────────────────────────────────────────────────────── */
+const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
+const HG = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY};
+const HW = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
+
+async function dbGet(table,filters={},orderBy=null){
+  let url=SUPA_URL+"/rest/v1/"+table+"?select=*";
+  Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);});
+  if(orderBy) url+="&order="+orderBy+".asc";
+  const r=await fetch(url,{method:"GET",headers:HG});
+  const d=await r.json();
+  if(!r.ok) console.error("dbGet",table,d);
+  return{data:Array.isArray(d)?d:[],error:r.ok?null:d};
+}
+async function dbInsert(table,data){const r=await fetch(SUPA_URL+"/rest/v1/"+table,{method:"POST",headers:HW,body:JSON.stringify(data)});const d=await r.json();return{data:d,error:r.ok?null:d};}
+async function dbUpdate(table,data,col,val){const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});const d=await r.json();return{data:d,error:r.ok?null:d};}
+async function dbDelete(table,col,val){const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"DELETE",headers:HG});return{error:r.ok?null:true};}
+
+/* ── HELPERS ─────────────────────────────────────────────────────────────── */
+const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
+const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
+const PO  = {urgente:0,alta:1,media:2,baja:3};
+const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#84cc16"];
+const initials = n=>n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+const todayStr = ()=>new Date().toISOString().slice(0,10);
+const fmtDate  = d=>{if(!d)return"";const[y,m,day]=d.split("-");return`${day}/${m}/${y}`;};
+const dayName  = d=>{const days=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];return days[new Date(d+"T12:00:00").getDay()];};
+
+function timeToMin(t){if(!t)return 999;const[h,m]=t.split(":").map(Number);return h*60+m;}
+function dist(a,b){return Math.sqrt(Math.pow((a.lat||0)-(b.lat||0),2)+Math.pow((a.lng||0)-(b.lng||0),2));}
+function localOptimize(stops,clients){
+  const wc=stops.map(s=>({...s,_c:clients.find(x=>x.id===s.client_id)||{},_t:timeToMin(s.time_limit)}));
+  const byPrio=[0,1,2,3].map(p=>wc.filter(s=>PO[s.priority]===p).sort((a,b)=>a._t-b._t));
+  const sorted=byPrio.flat();const result=[];const pool=[...sorted];
+  while(pool.length){
+    if(!result.length){result.push(pool.shift());continue;}
+    const last=result[result.length-1];
+    const same=pool.filter(s=>s.priority===last.priority);
+    if(same.length>0&&last._c.lat){
+      let bi=0,bd=Infinity;
+      same.forEach((s,i)=>{if(!s._c.lat)return;const d=dist(last._c,s._c);if(d<bd){bd=d;bi=i;}});
+      const ch=same[bi];pool.splice(pool.indexOf(ch),1);result.push(ch);
+    }else{result.push(pool.shift());}
+  }
+  return result.map((s,i)=>({id:s.id,route_order:i}));
+}
+function buildMapsUrl(stops,clients,depot=null){
+  const pts=stops.map(s=>{const c=clients.find(x=>x.id===s.client_id);return c?.address?encodeURIComponent(c.address):null;}).filter(Boolean);
+  if(!pts.length)return null;
+  const origin=depot?.address?`&origin=${encodeURIComponent(depot.address)}`:"";
+  return`https://www.google.com/maps/dir/?api=1${origin}&destination=${pts[pts.length-1]}&waypoints=${pts.slice(0,-1).join("|")}&travelmode=driving`;
+}
+
+/* ── LEAFLET ─────────────────────────────────────────────────────────────── */
+function initMap(el,center=[-34.61,-58.38],zoom=13){
+  const map=L.map(el,{zoomControl:true,attributionControl:false}).setView(center,zoom);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+  return map;
+}
+
+/* ── ROUTE MAP (pantalla del chofer) ─────────────────────────────────────── */
+function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null}){
+  const ref=useRef(null);const mapRef=useRef(null);
+  useEffect(()=>{
+    if(!ref.current)return;
+    if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+    const map=initMap(ref.current);mapRef.current=map;
+    const pts=[];
+    if(depot?.lat&&depot?.lng){
+      pts.push([depot.lat,depot.lng]);
+      const di=L.divIcon({className:"",html:`<div style="width:34px;height:34px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">🏭</div>`,iconSize:[34,34],iconAnchor:[17,17]});
+      L.marker([depot.lat,depot.lng],{icon:di}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b><br><span style="font-size:11px">${depot.address||""}</span>`);
+    }
+    // Live driver position
+    if(driver?.current_lat&&driver?.current_lng){
+      const min=driver.location_updated_at?Math.round((Date.now()-new Date(driver.location_updated_at))/60000):null;
+      const fresh=min!==null&&min<5;
+      const ti=L.divIcon({className:"",html:`<div style="width:40px;height:40px;border-radius:50%;background:${driverColor};border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:20px;position:relative">🚛<div style="position:absolute;top:-2px;right:-2px;width:12px;height:12px;border-radius:50%;background:${fresh?"#10b981":"#f59e0b"};border:2px solid #fff"></div></div>`,iconSize:[40,40],iconAnchor:[20,20]});
+      L.marker([driver.current_lat,driver.current_lng],{icon:ti,zIndexOffset:999}).addTo(map)
+        .bindPopup(`<div style="font-family:Inter,sans-serif"><b>${driver.name}</b><br><span style="color:${fresh?"#10b981":"#f59e0b"};font-size:11px">${fresh?"🟢 En ruta":"🟡 Sin señal reciente"}</span><br><span style="font-size:10px;color:#888">Hace ${min??"-"} min</span></div>`);
+    }
+    stops.forEach((s,i)=>{
+      const c=clients.find(x=>x.id===s.client_id);
+      if(!c?.lat||!c?.lng)return;
+      pts.push([c.lat,c.lng]);
+      const done=s.status==="entregado";
+      const bg=done?"#10b981":PC[s.priority];
+      const icon=L.divIcon({className:"",html:`<div style="width:30px;height:30px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25);font-family:Inter,sans-serif">${done?"✓":i+1}</div>`,iconSize:[30,30],iconAnchor:[15,15]});
+      L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<div style="font-family:Inter,sans-serif"><b>#${i+1} — ${c.name}</b><br>${c.address}<br><span style="color:${bg};font-size:11px">⏰ ${s.time_limit} · ${s.priority}${done?" · ✓ Entregado":""}</span></div>`);
+    });
+    if(pts.length>1){L.polyline(pts,{color:driverColor,weight:3,dashArray:"7,5",opacity:.7}).addTo(map);map.fitBounds(pts,{padding:[32,32]});}
+    else if(pts.length===1)map.setView(pts[0],15);
+    setTimeout(()=>map.invalidateSize(),100);
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[stops,clients,depot,driver?.current_lat,driver?.current_lng]);
+  return <div ref={ref} style={{width:"100%",height:"100%",minHeight:300,borderRadius:10}}/>;
+}
+
+/* ── TV MAP (todas las camionetas) ───────────────────────────────────────── */
+function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
+  const ref=useRef(null);const mapRef=useRef(null);
+  const layersRef=useRef([]);
   const [lastUp,setLastUp]=useState(new Date());
 
-  function clearAll(map){ layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}}); layersRef.current=[]; }
+  function clearLayers(map){layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}});layersRef.current=[];}
 
-  function redraw(map,driversD,stopsD,clientsD,depotD){
-    clearAll(map);
+  function redraw(map){
+    clearLayers(map);
     const allPts=[];
-    // Depósito
-    if(depotD?.lat&&depotD?.lng){
-      allPts.push([depotD.lat,depotD.lng]);
+    if(depot?.lat&&depot?.lng){
+      allPts.push([depot.lat,depot.lng]);
       const di=L.divIcon({className:"",html:`<div style="width:40px;height:40px;border-radius:10px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;border:2.5px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.5)">🏭</div>`,iconSize:[40,40],iconAnchor:[20,20]});
-      const dm=L.marker([depotD.lat,depotD.lng],{icon:di}).addTo(map).bindPopup(`<b>🏭 ${depotD.name||"Depósito"}</b><br><span style="font-size:11px">${depotD.address||""}</span>`);
+      const dm=L.marker([depot.lat,depot.lng],{icon:di}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b><br><span style="font-size:11px">${depot.address||""}</span>`);
       layersRef.current.push(dm);
     }
-    driversD.forEach(dr=>{
+    drivers.forEach(dr=>{
       const color=dr.color||"#6366f1";
-      const drvStops=[...stopsD.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
-      if(!drvStops.length) return;
-      // Ruta: empieza desde depósito
+      const drvStops=[...stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
+      if(!drvStops.length)return;
+      // Ruta desde depósito
       const routePts=[];
-      if(depotD?.lat&&depotD?.lng) routePts.push([depotD.lat,depotD.lng]);
+      if(depot?.lat&&depot?.lng)routePts.push([depot.lat,depot.lng]);
       drvStops.forEach((s,i)=>{
-        const c=clientsD.find(x=>x.id===s.client_id);
-        if(!c?.lat||!c?.lng) return;
+        const c=clients.find(x=>x.id===s.client_id);
+        if(!c?.lat||!c?.lng)return;
         routePts.push([c.lat,c.lng]);
         allPts.push([c.lat,c.lng]);
         const done=s.status==="entregado";
@@ -43,83 +167,717 @@ function AllDriversMap({drivers,stops,clients,depot,workDate,onClose,onRefresh})
       if(routePts.length>1){
         const poly=L.polyline(routePts,{color,weight:3.5,dashArray:"8,5",opacity:.8}).addTo(map);
         layersRef.current.push(poly);
-        // Etiqueta nombre chofer en primer punto de entrega
         const[lat,lng]=routePts[1]||routePts[0];
         const lbl=L.divIcon({className:"",html:`<div style="background:${color};color:#fff;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3);border:1.5px solid #fff">${dr.name}</div>`,iconSize:[0,0],iconAnchor:[-4,14]});
         const lm=L.marker([lat,lng],{icon:lbl,interactive:false,zIndexOffset:500}).addTo(map);
         layersRef.current.push(lm);
       }
-      // GPS del chofer en tiempo real
+      // 🚛 GPS del chofer
       if(dr.current_lat&&dr.current_lng){
         allPts.push([dr.current_lat,dr.current_lng]);
         const min=dr.location_updated_at?Math.round((Date.now()-new Date(dr.location_updated_at))/60000):null;
         const fresh=min!==null&&min<5;
-        const ti=L.divIcon({className:"",html:`<div style="display:flex;flex-direction:column;align-items:center"><div style="width:44px;height:44px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 3px 14px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:22px;position:relative">🚛<div style="position:absolute;top:-2px;right:-2px;width:12px;height:12px;border-radius:50%;background:${fresh?"#10b981":"#f59e0b"};border:2px solid #fff;animation:${fresh?"pulse 2s infinite":"none"}"></div></div></div>`,iconSize:[44,44],iconAnchor:[22,22]});
+        const ti=L.divIcon({className:"",html:`<div style="display:flex;flex-direction:column;align-items:center"><div style="width:44px;height:44px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 3px 14px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:22px;position:relative">🚛<div style="position:absolute;top:-2px;right:-2px;width:12px;height:12px;border-radius:50%;background:${fresh?"#10b981":"#f59e0b"};border:2px solid #fff"></div></div><div style="background:${color};color:#fff;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700;margin-top:3px;white-space:nowrap;box-shadow:0 2px 5px rgba(0,0,0,.3);font-family:Inter,sans-serif">${dr.avatar}</div></div>`,iconSize:[44,56],iconAnchor:[22,56]});
         const tm=L.marker([dr.current_lat,dr.current_lng],{icon:ti,zIndexOffset:1000}).addTo(map)
-          .bindPopup(`<div style="font-family:Inter,sans-serif"><b style="color:${color}">${dr.name}</b><br><span style="color:${fresh?"#10b981":"#f59e0b"};font-size:11px">${fresh?"🟢 En ruta":"🟡 Sin señal"}</span><br><span style="font-size:10px;color:#888">Hace ${min??"-"} min</span></div>`);
+          .bindPopup(`<div style="font-family:Inter,sans-serif"><b style="color:${color}">${dr.name}</b><br><span style="color:${fresh?"#10b981":"#f59e0b"};font-size:11px">${fresh?"🟢 En ruta activa":"🟡 Sin señal reciente"}</span><br><span style="font-size:10px;color:#888">Hace ${min??"-"} min</span></div>`);
         layersRef.current.push(tm);
       }
     });
-    if(allPts.length>0){ try{map.fitBounds(allPts.length===1?[allPts[0],allPts[0]]:allPts,{padding:[48,48],maxZoom:15});}catch{} }
+    if(allPts.length>0){try{map.fitBounds(allPts,{padding:[48,48],maxZoom:15});}catch{}}
     setLastUp(new Date());
   }
 
   useEffect(()=>{
-    if(!ref.current) return;
+    if(!ref.current)return;
     if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
     const map=initMap(ref.current,[-34.61,-58.38],12);
     mapRef.current=map;
-    redraw(map,drivers,stops,clients,depot);
+    redraw(map);
     setTimeout(()=>map.invalidateSize(),150);
     return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[]);
 
+  useEffect(()=>{
+    if(mapRef.current)redraw(mapRef.current);
+  },[stops,drivers,clients,depot]);
+
   // Refresh cada 5 segundos
   useEffect(()=>{
     const iv=setInterval(async()=>{
-      if(onRefresh) await onRefresh();
-      if(mapRef.current) redraw(mapRef.current,drivers,stops,clients,depot);
+      if(onRefresh)await onRefresh();
     },5000);
     return()=>clearInterval(iv);
-  },[drivers,stops,clients,depot,workDate]);
+  },[]);
 
-  useEffect(()=>{
-    if(mapRef.current) redraw(mapRef.current,drivers,stops,clients,depot);
-  },[stops,drivers]);
-
-  const fmt=t=>`${t.getHours().toString().padStart(2,"0")}:${t.getMinutes().toString().padStart(2,"0")}:${t.getSeconds().toString().padStart(2,"0")}`;
+  const fmt=t=>`${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}`;
 
   return(
     <div style={{position:"fixed",inset:0,background:"#111",zIndex:600,display:"flex",flexDirection:"column"}}>
       <div style={{height:56,background:"#0a0a0a",borderBottom:"1px solid #1f1f1f",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0}}>
-        <span style={{fontWeight:800,fontSize:15,color:"#fff",letterSpacing:-.3}}>CA-<span style={{color:"#f97316"}}>Chofer</span></span>
-        <span style={{fontSize:11,color:"#444",background:"#181818",padding:"2px 8px",borderRadius:20}}>Vista TV</span>
-        {/* Leyenda */}
+        <span style={{fontWeight:800,fontSize:15,color:"#fff",letterSpacing:-.3,flexShrink:0}}>CA-<span style={{color:"#f97316"}}>Chofer</span></span>
+        <span style={{fontSize:11,color:"#444",background:"#181818",padding:"2px 8px",borderRadius:20,flexShrink:0}}>Vista TV</span>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,background:"#181818",flexShrink:0}}>
+            <span style={{fontSize:14}}>🏭</span>
+            <span style={{fontSize:11,color:"#777"}}>{depot?.name||"Depósito"}</span>
+          </div>
           {drivers.filter(dr=>stops.some(s=>s.driver_id===dr.id&&s.work_date===workDate)).map(dr=>{
             const color=dr.color||"#6366f1";
             const cnt=stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate).length;
             const done=stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate&&s.status==="entregado").length;
-            const isActive=dr.current_lat&&dr.location_updated_at&&Math.round((Date.now()-new Date(dr.location_updated_at))/60000)<5;
+            const isActive=!!(dr.current_lat&&dr.location_updated_at&&Math.round((Date.now()-new Date(dr.location_updated_at))/60000)<5);
             return(
-              <div key={dr.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:20,border:`1.5px solid ${color}`,background:`${color}18`}}>
-                <div style={{width:8,height:8,borderRadius:"50%",background:color,animation:isActive?"pulse 2s infinite":"none"}}/>
+              <div key={dr.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:20,border:`1.5px solid ${color}`,background:`${color}18`,flexShrink:0}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:color,flexShrink:0}}/>
                 <span style={{fontSize:12,fontWeight:600,color:"#fff"}}>{dr.name}</span>
-                <span style={{fontSize:11,color:"#666"}}>{done}/{cnt} ✓</span>
-                {isActive&&<span style={{fontSize:10,color:"#10b981"}}>🟢</span>}
+                <span style={{fontSize:11,color:"#666"}}>{done}/{cnt}</span>
+                <span style={{fontSize:10}}>{isActive?"🟢":"⚫"}</span>
               </div>
             );
           })}
-          <div style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,background:"#181818"}}>
-            <span style={{width:8,height:8,borderRadius:2,background:"#111",border:"1px solid #555",display:"inline-block"}}/>
-            <span style={{fontSize:11,color:"#555"}}>🏭 Depósito</span>
-          </div>
         </div>
-        <div style={{fontSize:11,color:"#333",fontFamily:"monospace"}}>{fmt(lastUp)}</div>
-        <button onClick={onClose} style={{background:"#1a1a1a",border:"1px solid #333",borderRadius:8,padding:"6px 14px",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer"}}>✕ Cerrar</button>
+        <span style={{fontSize:11,color:"#333",fontFamily:"monospace",flexShrink:0}}>{fmt(lastUp)}</span>
+        <button onClick={onClose} style={{background:"#1a1a1a",border:"1px solid #333",borderRadius:8,padding:"6px 14px",color:"#fff",fontSize:12,fontWeight:500,cursor:"pointer",flexShrink:0}}>✕ Cerrar</button>
       </div>
       <div ref={ref} style={{flex:1}}/>
     </div>
   );
 }
 
+/* ── UI PRIMITIVES ───────────────────────────────────────────────────────── */
+function Modal({onClose,children,w=500}){
+  return(
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(3px)"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:28,width:"100%",maxWidth:w,boxShadow:"0 20px 60px rgba(0,0,0,0.13)",animation:"slideUp .22s ease",maxHeight:"90vh",overflowY:"auto"}}>{children}</div>
+    </div>
+  );
+}
+function MHead({title,onClose}){return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}><h2 style={{fontSize:17,fontWeight:600}}>{title}</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:22,color:"#94a3b8",cursor:"pointer",lineHeight:1}}>×</button></div>;}
+function Field({label,children}){return <div style={{marginBottom:14}}><label style={{fontSize:11,fontWeight:500,color:"#64748b",display:"block",marginBottom:5,textTransform:"uppercase",letterSpacing:.5}}>{label}</label>{children}</div>;}
+function Inp({value,onChange,placeholder,type="text",style={}}){return <input type={type} value={value} onChange={onChange} placeholder={placeholder} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",...style}}/>;}
+function PTag({p}){return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;}
+function Btn({children,onClick,variant="secondary",disabled=false,style={}}){
+  const v={primary:{background:"#111",color:"#fff",border:"none"},secondary:{background:"#fff",color:"#64748b",border:"1.5px solid #e2e8f0"},danger:{background:"#ef4444",color:"#fff",border:"none"},success:{background:"#10b981",color:"#fff",border:"none"}};
+  return <button onClick={onClick} disabled={disabled} style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:500,opacity:disabled?.4:1,cursor:disabled?"not-allowed":"pointer",transition:"all .15s",...v[variant],...style}}>{children}</button>;
+}
+function Spinner(){return <div style={{width:32,height:32,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>;}
+
+/* ── MODALS ──────────────────────────────────────────────────────────────── */
+function StopModal({initial,clients,products,workDate,onClose,onSave}){
+  const [clientId,setClientId]=useState(initial?.client_id||"");
+  const [items,setItems]=useState(initial?.products||[]);
+  const [timeLimit,setTL]=useState(initial?.time_limit||"12:00");
+  const [priority,setPrio]=useState(initial?.priority||"media");
+  const [notes,setNotes]=useState(initial?.notes||"");
+  const [addProd,setAddProd]=useState("");const [addQty,setAddQty]=useState(1);
+  function addItem(){if(!addProd)return;setItems(it=>it.find(i=>i.productId===addProd)?it.map(i=>i.productId===addProd?{...i,qty:i.qty+addQty}:i):[...it,{productId:addProd,qty:addQty}]);setAddProd("");setAddQty(1);}
+  return(
+    <Modal onClose={onClose} w={540}>
+      <MHead title={initial?.id?"Editar parada":"Nueva parada"} onClose={onClose}/>
+      <Field label="Cliente">
+        <select value={clientId} onChange={e=>setClientId(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>
+          <option value="">— Seleccioná un cliente —</option>
+          {[...clients].sort((a,b)=>a.name.localeCompare(b.name)).map(c=><option key={c.id} value={c.id}>{c.name} — {c.address}</option>)}
+        </select>
+      </Field>
+      <Field label="Productos">
+        <div style={{border:"1.5px solid #e2e8f0",borderRadius:8,padding:10,marginBottom:8,minHeight:44}}>
+          {items.length===0&&<div style={{fontSize:12,color:"#cbd5e1",textAlign:"center",padding:"4px 0"}}>Sin productos</div>}
+          {items.map(item=>{const p=products.find(x=>x.id===item.productId);return(<div key={item.productId} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 6px",background:"#f8fafc",borderRadius:6,marginBottom:5}}><span style={{fontSize:12,fontWeight:500,flex:1}}>{p?.name}</span><span style={{fontSize:11,color:"#94a3b8"}}>{p?.unit}</span><span style={{fontSize:13,fontWeight:600,minWidth:24,textAlign:"center"}}>×{item.qty}</span><button onClick={()=>setItems(it=>it.filter(i=>i.productId!==item.productId))} style={{background:"none",border:"none",color:"#ef4444",fontSize:15,cursor:"pointer"}}>×</button></div>);})}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <select value={addProd} onChange={e=>setAddProd(e.target.value)} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",background:"#fff"}}><option value="">Elegir producto…</option>{products.map(p=><option key={p.id} value={p.id}>{p.name} ({p.description})</option>)}</select>
+          <input type="number" min={1} max={99} value={addQty} onChange={e=>setAddQty(parseInt(e.target.value)||1)} style={{width:58,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",textAlign:"center"}}/>
+          <Btn onClick={addItem} variant="primary" style={{padding:"8px 14px",fontSize:13}}>＋</Btn>
+        </div>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Horario límite"><input type="time" value={timeLimit} onChange={e=>setTL(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/></Field>
+        <Field label="Prioridad"><select value={priority} onChange={e=>setPrio(e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>{["urgente","alta","media","baja"].map(p=><option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)}</option>)}</select></Field>
+      </div>
+      <Field label="Notas"><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Timbre roto, dejar con portero…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!clientId)return;onSave({id:initial?.id||"ST"+Date.now(),client_id:clientId,products:items,time_limit:timeLimit,priority,notes,status:initial?.status||"pendiente",work_date:initial?.work_date||workDate,driver_id:initial?.driver_id||null,route_order:initial?.route_order||0});onClose();}} variant="primary" disabled={!clientId}>{initial?.id?"Guardar":"Agregar parada"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function GeoField({label,value,onChange,placeholder}){
+  const [geocoding,setGeocoding]=useState(false);const [msg,setMsg]=useState("");
+  async function geocode(){
+    if(!value)return;setGeocoding(true);setMsg("");
+    try{const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(value)}&format=json&limit=1`,{headers:{"Accept-Language":"es","User-Agent":"CachoFer/1.0"}});const d=await r.json();
+      if(d.length>0){onChange({lat:parseFloat(d[0].lat).toFixed(6),lng:parseFloat(d[0].lon).toFixed(6)});setMsg("✓ "+d[0].display_name.split(",").slice(0,2).join(","));}
+      else setMsg("⚠ No encontrada. Probá con más detalle.");
+    }catch{setMsg("⚠ Error al buscar.");}
+    setGeocoding(false);
+  }
+  return(
+    <Field label={label}>
+      <div style={{display:"flex",gap:8}}>
+        <input value={value} onChange={e=>{onChange({address:e.target.value});setMsg("");}} placeholder={placeholder} style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/>
+        <button onClick={geocode} disabled={geocoding||!value} style={{padding:"8px 14px",borderRadius:8,border:"none",background:geocoding?"#f1f5f9":"#111",color:geocoding?"#94a3b8":"#fff",fontSize:12,fontWeight:500,cursor:geocoding||!value?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>{geocoding?"Buscando…":"📍 Buscar"}</button>
+      </div>
+      {msg&&<div style={{fontSize:11,marginTop:5,color:msg.startsWith("✓")?"#10b981":"#f59e0b",lineHeight:1.4}}>{msg}</div>}
+    </Field>
+  );
+}
+
+function ClientModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",address:"",phone:"",notes:"",lat:"",lng:""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <Modal onClose={onClose} w={480}>
+      <MHead title={initial?.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Nombre o razón social"/></Field>
+      <GeoField label="Dirección" value={f.address} placeholder="Av. Corrientes 1234, Buenos Aires" onChange={v=>{if(v.address!==undefined)s("address",v.address);if(v.lat)setF(p=>({...p,lat:v.lat,lng:v.lng}));}}/>
+      <Field label="Teléfono"><Inp value={f.phone} onChange={e=>s("phone",e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
+      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:60}}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-34.6037"/></Field>
+        <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-58.3816"/></Field>
+      </div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:14,marginTop:-8}}>Ponés la dirección y tocás 📍 Buscar — las coordenadas se cargan solas.</div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!f.name||!f.address)return;onSave({...f,id:initial?.id||"CL"+Date.now(),lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.name||!f.address}>{initial?.id?"Guardar":"Crear cliente"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function ProductModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",description:"",unit:"unidad"});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <Modal onClose={onClose} w={400}>
+      <MHead title={initial?.id?"Editar producto":"Nuevo producto"} onClose={onClose}/>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Caja mediana"/></Field>
+      <Field label="Descripción"><Inp value={f.description||""} onChange={e=>s("description",e.target.value)} placeholder="Ej: 5–15kg"/></Field>
+      <Field label="Unidad"><select value={f.unit} onChange={e=>s("unit",e.target.value)} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",background:"#fff"}}>{["unidad","paquete","pallet","kg","litro","caja"].map(u=><option key={u}>{u}</option>)}</select></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!f.name)return;onSave({...f,id:initial?.id||"PR"+Date.now()});onClose();}} variant="primary" disabled={!f.name}>{initial?.id?"Guardar":"Crear producto"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function DriverModal({initial,allDrivers,onClose,onSave}){
+  const [name,setName]=useState(initial?.name||"");const [phone,setPhone]=useState(initial?.phone||"");const [color,setColor]=useState(initial?.color||COLORS[0]);const [err,setErr]=useState("");
+  return(
+    <Modal onClose={onClose} w={400}>
+      <MHead title={initial?"Editar chofer":"Nuevo chofer"} onClose={onClose}/>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+        <div style={{width:60,height:60,borderRadius:14,background:color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:22,fontWeight:700}}>{name?initials(name):"?"}</div>
+      </div>
+      <Field label="Nombre completo"><Inp value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="Ej: Carlos Méndez"/>{err&&<div style={{fontSize:12,color:"#ef4444",marginTop:4}}>{err}</div>}</Field>
+      <Field label="Teléfono"><Inp value={phone} onChange={e=>setPhone(e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
+      <Field label="Color"><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{COLORS.map(c=><button key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:8,background:c,border:color===c?"3px solid #111":"3px solid transparent",cursor:"pointer"}}/>)}</div></Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:12}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!name.trim()){setErr("Nombre obligatorio");return;}const av=initials(name);onSave(initial?{...initial,name:name.trim(),phone:phone.trim(),avatar:av,color}:{id:"CHF"+Date.now(),name:name.trim(),phone:phone.trim(),status:"disponible",avatar:av,color});onClose();}} variant="primary">{initial?"Guardar":"Crear chofer"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function DepotModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",address:"",lat:"",lng:""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <Modal onClose={onClose} w={480}>
+      <MHead title="⚙️ Configurar depósito" onClose={onClose}/>
+      <div style={{background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#0284c7"}}>El depósito es el punto de partida de todas las rutas.</div>
+      <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Depósito Central"/></Field>
+      <GeoField label="Dirección" value={f.address} placeholder="Av. Alem 1234, Bahía Blanca" onChange={v=>{if(v.address!==undefined)s("address",v.address);if(v.lat)setF(p=>({...p,lat:v.lat,lng:v.lng}));}}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-38.7183"/></Field>
+        <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-62.2663"/></Field>
+      </div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:14,marginTop:-8}}>Ponés la dirección y tocás 📍 Buscar.</div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!f.address)return;onSave({...f,lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.address}>Guardar depósito</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function HistoryModal({onClose,workDate,onLoadDate}){
+  const [dates,setDates]=useState([]);const [loading,setLoading]=useState(true);
+  useEffect(()=>{
+    dbGet("stops").then(({data})=>{
+      if(!data)return;
+      const map={};
+      data.forEach(s=>{if(!map[s.work_date])map[s.work_date]={total:0,delivered:0};map[s.work_date].total++;if(s.status==="entregado")map[s.work_date].delivered++;});
+      setDates(Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0])));
+      setLoading(false);
+    });
+  },[]);
+  return(
+    <Modal onClose={onClose} w={520}>
+      <MHead title="📅 Historial de rutas" onClose={onClose}/>
+      {loading&&<div style={{display:"flex",justifyContent:"center",padding:32}}><Spinner/></div>}
+      {!loading&&dates.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,padding:"32px 0"}}>No hay rutas guardadas aún.</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {dates.map(([date,stats])=>{
+          const isToday=date===todayStr();const isCurrent=date===workDate;
+          return(
+            <div key={date} style={{background:isCurrent?"#f0f9ff":"#f8fafc",border:`1.5px solid ${isCurrent?"#bae6fd":"#e2e8f0"}`,borderRadius:12,padding:"14px 16px",display:"flex",alignItems:"center",gap:14}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                  <span style={{fontSize:14,fontWeight:600}}>{dayName(date)} {fmtDate(date)}</span>
+                  {isToday&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#dbeafe",color:"#1d4ed8"}}>HOY</span>}
+                  {isCurrent&&<span style={{fontSize:10,fontWeight:600,padding:"1px 7px",borderRadius:20,background:"#f0f9ff",color:"#0284c7"}}>ACTIVO</span>}
+                </div>
+                <div style={{fontSize:12,color:"#64748b",display:"flex",gap:12}}>
+                  <span>📦 {stats.total} paradas</span>
+                  <span style={{color:"#10b981"}}>✓ {stats.delivered}</span>
+                  <span style={{color:"#f97316"}}>⏳ {stats.total-stats.delivered}</span>
+                </div>
+              </div>
+              <Btn onClick={()=>{onLoadDate(date);onClose();}} variant={isCurrent?"secondary":"primary"} style={{fontSize:11,padding:"6px 14px"}}>{isCurrent?"Activo":"Cargar"}</Btn>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+function Confirm({msg,onConfirm,onClose}){
+  return(
+    <Modal onClose={onClose} w={340}>
+      <div style={{textAlign:"center",padding:"8px 0"}}>
+        <div style={{fontSize:38,marginBottom:12}}>⚠️</div>
+        <h2 style={{fontSize:16,fontWeight:600,marginBottom:8}}>¿Confirmar?</h2>
+        <p style={{fontSize:13,color:"#64748b",marginBottom:22,lineHeight:1.5}}>{msg}</p>
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+          <Btn onClick={onClose}>Cancelar</Btn>
+          <Btn onClick={()=>{onConfirm();onClose();}} variant="danger">Eliminar</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── DRIVER DETAIL ───────────────────────────────────────────────────────── */
+function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAddStop,onOptimize,onDispatch,onRefresh}){
+  const drvStops=[...stops.filter(s=>s.driver_id===driver.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
+  const unassigned=stops.filter(s=>s.work_date===workDate&&!s.driver_id&&s.status!=="entregado");
+  const [search,setSearch]=useState("");
+  const filtered=search.trim()===""?unassigned:unassigned.filter(s=>{const c=clients.find(x=>x.id===s.client_id)||{};return(c.name||"").toLowerCase().includes(search.toLowerCase())||(c.address||"").toLowerCase().includes(search.toLowerCase());});
+  const mapsUrl=buildMapsUrl(drvStops,clients,depot);
+
+  async function assign(sid){await dbUpdate("stops",{driver_id:driver.id,route_order:drvStops.length},"id",sid);onRefresh();}
+  async function unassign(sid){await dbUpdate("stops",{driver_id:null,route_order:0},"id",sid);onRefresh();}
+  async function moveUp(idx){if(idx===0)return;const a=drvStops[idx-1],b=drvStops[idx];await dbUpdate("stops",{route_order:b.route_order},"id",a.id);await dbUpdate("stops",{route_order:a.route_order},"id",b.id);onRefresh();}
+  async function moveDown(idx){if(idx>=drvStops.length-1)return;const a=drvStops[idx],b=drvStops[idx+1];await dbUpdate("stops",{route_order:b.route_order},"id",a.id);await dbUpdate("stops",{route_order:a.route_order},"id",b.id);onRefresh();}
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#fff",zIndex:300,display:"flex",flexDirection:"column",animation:"fadeIn .2s ease"}}>
+      <div style={{height:56,borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <button onClick={onClose} style={{background:"none",border:"none",fontSize:14,color:"#64748b",cursor:"pointer",fontFamily:"inherit",padding:"4px 8px",borderRadius:6}}>← Volver</button>
+        <div style={{width:34,height:34,borderRadius:9,background:driver.color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700}}>{driver.avatar}</div>
+        <div><div style={{fontSize:14,fontWeight:600}}>{driver.name}</div><div style={{fontSize:11,color:"#94a3b8"}}>{driver.id} · {drvStops.length} paradas · {dayName(workDate)} {fmtDate(workDate)}</div></div>
+        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+          {mapsUrl&&<a href={mapsUrl} target="_blank" rel="noreferrer" style={{padding:"8px 14px",borderRadius:8,background:"#1d4ed8",color:"#fff",fontSize:12,fontWeight:500,textDecoration:"none"}}>🗺️ Abrir en Maps</a>}
+          <Btn onClick={()=>onOptimize(driver.id,drvStops)} disabled={drvStops.length<2} style={{fontSize:12}}>⚡ Optimizar</Btn>
+          <Btn onClick={()=>onDispatch(driver.id)} variant="primary" disabled={drvStops.length===0} style={{fontSize:12}}>🚀 Despachar</Btn>
+        </div>
+      </div>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr 1.2fr",overflow:"hidden"}}>
+        {/* Sin asignar */}
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"10px 12px",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+            <span style={{fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5}}>Disponibles ({unassigned.length})</span>
+            <button onClick={onAddStop} style={{padding:"4px 10px",borderRadius:6,border:"none",background:"#111",color:"#fff",fontSize:11,fontWeight:500,cursor:"pointer"}}>+ Nueva</button>
+          </div>
+          <div style={{padding:"8px 12px",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar cliente…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",background:"#f8fafc"}}/>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {filtered.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32,lineHeight:1.8}}>Sin paradas disponibles.<br/><span style={{fontSize:11}}>Usá + Nueva para agregar.</span></div>}
+            {[...filtered].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+              const c=clients.find(x=>x.id===s.client_id)||{};
+              const prods=(s.products||[]).map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:""}).filter(Boolean).join(", ");
+              return(
+                <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"12px 14px",marginBottom:8,border:"1px solid #e2e8f0",boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}><PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span></div>
+                  <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>{c.name||"(sin cliente)"}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginBottom:4}}>{c.address}</div>
+                  {prods&&<div style={{fontSize:11,color:"#6366f1",marginBottom:8}}>📦 {prods}</div>}
+                  <button onClick={()=>assign(s.id)} style={{width:"100%",padding:"7px",borderRadius:7,border:"none",background:"#111",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>+ Agregar a la ruta</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* Ruta */}
+        <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>Ruta ({drvStops.length})</span><span style={{fontSize:10,color:"#cbd5e1",fontWeight:400,textTransform:"none"}}>↑↓ reordenar</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
+            {drvStops.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin paradas asignadas</div>}
+            {drvStops.map((s,i)=>{
+              const c=clients.find(x=>x.id===s.client_id)||{};
+              const prods=(s.products||[]).map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:""}).filter(Boolean).join(", ");
+              return(
+                <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #e2e8f0",display:"flex",gap:8,alignItems:"flex-start",opacity:s.status==="entregado"?.55:1}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:s.status==="entregado"?"#10b981":i===0?"#6366f1":"#f1f5f9",color:s.status==="entregado"||i===0?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{s.status==="entregado"?"✓":i===0?"●":i+1}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3}}><PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>{s.status==="entregado"&&<span style={{fontSize:10,fontWeight:600,color:"#10b981"}}>✓</span>}</div>
+                    <div style={{fontSize:12,fontWeight:600,marginBottom:1}}>{c.name}</div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginBottom:2}}>{c.address}</div>
+                    {prods&&<div style={{fontSize:11,color:"#6366f1",marginBottom:4}}>📦 {prods}</div>}
+                    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address||"")}`} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#1d4ed8",textDecoration:"none"}}>📍 Ver en Maps</a>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+                    <button onClick={()=>moveUp(i)} disabled={i===0} style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</button>
+                    <button onClick={()=>moveDown(i)} disabled={i>=drvStops.length-1} style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:12,cursor:i>=drvStops.length-1?"not-allowed":"pointer",opacity:i>=drvStops.length-1?.3:1,display:"flex",alignItems:"center",justifyContent:"center"}}>↓</button>
+                    <button onClick={()=>unassign(s.id)} style={{width:24,height:24,borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#ef4444"}}>✕</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* Mapa */}
+        <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span>Mapa</span>
+            {mapsUrl&&<a href={mapsUrl} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#1d4ed8",textDecoration:"none"}}>Abrir en Maps →</a>}
+          </div>
+          <div style={{flex:1,padding:10}}>
+            {drvStops.length===0
+              ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8,textAlign:"center",padding:20}}><span style={{fontSize:40}}>🗺️</span>Asigná paradas para ver la ruta<br/><span style={{fontSize:11,color:"#e2e8f0"}}>Los clientes necesitan coordenadas (lat/lng)</span></div>
+              :<RouteMap stops={drvStops} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"} driver={driver}/>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── MAIN APP ─────────────────────────────────────────────────────────────── */
+function App(){
+  const [loading,setLoading]   = useState(true);
+  const [drivers,setDrivers]   = useState([]);
+  const [clients,setClients]   = useState([]);
+  const [products,setProducts] = useState([]);
+  const [stops,setStops]       = useState([]);
+  const [workDate,setWorkDate] = useState(todayStr());
+  const [page,setPage]         = useState("dispatch");
+  const [detailDrv,setDetailDrv] = useState(null);
+  const [toast,setToast]       = useState(null);
+  const [modal,setModal]       = useState(null);
+  const [confirm,setConfirm]   = useState(null);
+  const [showHistory,setShowHistory] = useState(false);
+  const [showTV,setShowTV]     = useState(false);
+  const [connected,setConnected] = useState(false);
+  const [depot,setDepot]       = useState(()=>{try{return JSON.parse(localStorage.getItem("cachofer_depot"))||{name:"",address:"",lat:null,lng:null};}catch{return{name:"",address:"",lat:null,lng:null};}});
+
+  const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
+
+  async function fetchAll(){
+    const [d,cl,pr,st]=await Promise.all([
+      dbGet("drivers",{},"name"),
+      dbGet("clients",{},"name"),
+      dbGet("products",{},"name"),
+      dbGet("stops",{},"route_order"),
+    ]);
+    if(d.data)setDrivers(d.data);
+    if(cl.data)setClients(cl.data);
+    if(pr.data)setProducts(pr.data);
+    if(st.data)setStops(st.data);
+    setConnected(true);setLoading(false);
+    return true;
+  }
+
+  useEffect(()=>{fetchAll();},[]);
+
+  function saveDepot(d){setDepot(d);localStorage.setItem("cachofer_depot",JSON.stringify(d));t_("Depósito guardado ✓");}
+
+  async function saveDriver(d){
+    if(drivers.find(x=>x.id===d.id)){await dbUpdate("drivers",d,"id",d.id);setDrivers(p=>p.map(x=>x.id===d.id?d:x));if(detailDrv?.id===d.id)setDetailDrv(d);}
+    else{await dbInsert("drivers",d);setDrivers(p=>[...p,d].sort((a,b)=>a.name.localeCompare(b.name)));}
+    t_(d.name+" guardado ✓");
+  }
+  async function deleteDriver(id){
+    await dbUpdate("stops",{driver_id:null},"driver_id",id);
+    await dbDelete("drivers","id",id);
+    setDrivers(p=>p.filter(x=>x.id!==id));
+    setStops(p=>p.map(s=>s.driver_id===id?{...s,driver_id:null}:s));
+    if(detailDrv?.id===id)setDetailDrv(null);
+    t_("Chofer eliminado");
+  }
+  async function saveClient(c){
+    if(clients.find(x=>x.id===c.id)){await dbUpdate("clients",c,"id",c.id);setClients(p=>p.map(x=>x.id===c.id?c:x));}
+    else{await dbInsert("clients",c);setClients(p=>[...p,c].sort((a,b)=>a.name.localeCompare(b.name)));}
+    t_("Cliente guardado ✓");
+  }
+  async function deleteClient(id){await dbDelete("clients","id",id);setClients(p=>p.filter(x=>x.id!==id));t_("Cliente eliminado");}
+  async function saveProduct(p){
+    if(products.find(x=>x.id===p.id)){await dbUpdate("products",p,"id",p.id);setProducts(x=>x.map(y=>y.id===p.id?p:y));}
+    else{await dbInsert("products",p);setProducts(x=>[...x,p].sort((a,b)=>a.name.localeCompare(b.name)));}
+    t_("Producto guardado ✓");
+  }
+  async function deleteProduct(id){await dbDelete("products","id",id);setProducts(x=>x.filter(y=>y.id!==id));t_("Producto eliminado");}
+  async function saveStop(s){
+    if(stops.find(x=>x.id===s.id)){await dbUpdate("stops",s,"id",s.id);setStops(p=>p.map(x=>x.id===s.id?s:x));}
+    else{await dbInsert("stops",s);setStops(p=>[...p,s]);}
+    t_("Parada guardada ✓");
+  }
+  async function deleteStop(id){await dbDelete("stops","id",id);setStops(p=>p.filter(x=>x.id!==id));t_("Parada eliminada");}
+
+  async function handleOptimize(driverId,drvStops){
+    if(drvStops.length<2){t_("Necesitás al menos 2 paradas");return;}
+    const ordered=localOptimize(drvStops,clients);
+    for(const o of ordered)await dbUpdate("stops",{route_order:o.route_order},"id",o.id);
+    await fetchAll();t_("⚡ Ruta optimizada");
+  }
+  async function handleDispatch(driverId){
+    await dbUpdate("drivers",{status:"en_ruta"},"id",driverId);
+    setDrivers(d=>d.map(x=>x.id===driverId?{...x,status:"en_ruta"}:x));
+    t_("Ruta despachada ✓");
+  }
+
+  const todayStops=stops.filter(s=>s.work_date===workDate);
+  const unassignedAll=todayStops.filter(s=>!s.driver_id&&s.status!=="entregado");
+
+  if(loading)return(
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:"#f8f9fa"}}>
+      <Spinner/><div style={{fontSize:13,color:"#94a3b8"}}>Conectando con Supabase…</div>
+    </div>
+  );
+
+  const navItem=(id,label,icon)=>(
+    <button onClick={()=>setPage(id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:page===id?"#f1f5f9":"transparent",color:page===id?"#111":"#64748b",fontSize:13,fontWeight:page===id?600:400,width:"100%",textAlign:"left",cursor:"pointer"}}>
+      <span style={{fontSize:16}}>{icon}</span>{label}
+    </button>
+  );
+
+  return(
+    <div style={{height:"100vh",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
+      {/* HEADER */}
+      <header style={{height:54,background:"#fff",borderBottom:"1px solid #f1f5f9",display:"flex",alignItems:"center",padding:"0 20px",gap:14,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:28,height:28,borderRadius:7,background:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🚛</div>
+          <span style={{fontWeight:700,fontSize:15,letterSpacing:-.3}}>CA-<span style={{color:"#f97316"}}>Chofer</span></span>
+          <span style={{fontSize:11,color:"#94a3b8",background:"#f1f5f9",padding:"2px 8px",borderRadius:20}}>Central</span>
+          <span style={{width:7,height:7,borderRadius:"50%",background:connected?"#10b981":"#f59e0b",display:"inline-block"}} title={connected?"Conectado":"Conectando…"}/>
+        </div>
+        {page==="dispatch"&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:4}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:9,padding:"5px 10px"}}>
+              <span style={{fontSize:13}}>📅</span>
+              <input type="date" value={workDate} onChange={e=>setWorkDate(e.target.value)} style={{border:"none",background:"transparent",fontSize:13,fontWeight:500,color:"#111",outline:"none",cursor:"pointer"}}/>
+              <span style={{fontSize:11,color:"#94a3b8"}}>{dayName(workDate)}</span>
+            </div>
+            <button onClick={()=>setShowHistory(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#64748b",cursor:"pointer"}}>🗂️ Historial</button>
+            <button onClick={()=>setShowTV(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#111",cursor:"pointer"}}>📺 Vista TV</button>
+            <button onClick={()=>setModal({type:"depot"})} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:`1.5px solid ${depot?.address?"#bbf7d0":"#fee2e2"}`,background:depot?.address?"#f0fdf4":"#fff",fontSize:12,fontWeight:500,color:depot?.address?"#16a34a":"#ef4444",cursor:"pointer"}}>
+              🏭 {depot?.address?depot.name||"Depósito":"Sin depósito ⚠"}
+            </button>
+          </div>
+        )}
+        <div style={{marginLeft:"auto",display:"flex",gap:16,alignItems:"center"}}>
+          {[[todayStops.filter(s=>s.status!=="entregado").length,"pendientes","📦"],[todayStops.filter(s=>s.status==="entregado").length,"entregadas","✅"],[clients.length,"clientes","👤"],[products.length,"productos","🏷️"]].map(([v,l,ic])=>(
+            <div key={l} style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:13}}>{ic}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span><span style={{fontSize:11,color:"#94a3b8"}}>{l}</span></div>
+          ))}
+        </div>
+      </header>
+
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"200px 1fr",overflow:"hidden"}}>
+        {/* SIDEBAR */}
+        <nav style={{background:"#fff",borderRight:"1px solid #f1f5f9",padding:"12px 10px",display:"flex",flexDirection:"column",gap:2}}>
+          {navItem("dispatch","Despacho","🚛")}
+          {navItem("clients","Clientes","👤")}
+          {navItem("products","Productos","📦")}
+          <div style={{flex:1}}/>
+          <button onClick={()=>setModal({type:"depot"})} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:"transparent",color:"#64748b",fontSize:13,fontWeight:400,width:"100%",textAlign:"left",cursor:"pointer"}}><span style={{fontSize:16}}>⚙️</span>Depósito</button>
+          <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px"}}>CA-Chofer v6</div>
+        </nav>
+
+        <div style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
+          {/* DISPATCH */}
+          {page==="dispatch"&&(
+            <div style={{flex:1,display:"grid",gridTemplateColumns:"240px 1fr",overflow:"hidden"}}>
+              <div style={{borderRight:"1px solid #f1f5f9",background:"#fff",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                <div style={{padding:"14px 14px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5}}>Choferes</span>
+                  <button onClick={()=>setModal({type:"addDriver"})} style={{width:24,height:24,borderRadius:6,background:"#111",border:"none",color:"#fff",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>+</button>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px"}}>
+                  {drivers.map(dr=>{
+                    const cnt=stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate).length;
+                    const isActive=!!(dr.current_lat&&dr.location_updated_at&&Math.round((Date.now()-new Date(dr.location_updated_at))/60000)<5);
+                    return(
+                      <div key={dr.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px",borderRadius:10,marginBottom:2,border:"1px solid transparent",transition:"all .15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background="#f8fafc";e.currentTarget.style.borderColor="#e2e8f0";}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor="transparent";}}>
+                        <div onClick={()=>setDetailDrv(dr)} style={{width:36,height:36,borderRadius:10,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0,cursor:"pointer",position:"relative"}}>
+                          {dr.avatar}
+                          {isActive&&<div style={{position:"absolute",top:-2,right:-2,width:10,height:10,borderRadius:"50%",background:"#10b981",border:"2px solid #fff"}}/>}
+                        </div>
+                        <div onClick={()=>setDetailDrv(dr)} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                          <div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dr.name}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",marginTop:1,display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:dr.status==="en_ruta"?"#10b981":"#e2e8f0",display:"inline-block"}}/>
+                            {dr.status==="en_ruta"?"En ruta":"Disponible"} · <span style={{color:cnt>0?"#6366f1":"#94a3b8"}}>{cnt} paradas</span>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:4,flexShrink:0}}>
+                          <button onClick={e=>{e.stopPropagation();setModal({type:"editDriver",data:dr});}} style={{width:24,height:24,borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✏️</button>
+                          <button onClick={e=>{e.stopPropagation();setConfirm({msg:`¿Eliminar a ${dr.name}?`,fn:()=>deleteDriver(dr.id)});}} style={{width:24,height:24,borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🗑️</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {drivers.length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin choferes.<br/>Creá uno con +</div>}
+                </div>
+                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",flexShrink:0}}>
+                  {[["Sin asignar",unassignedAll.length],["Urgentes",todayStops.filter(s=>s.priority==="urgente"&&s.status!=="entregado").length]].map(([l,v])=>(
+                    <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style={{color:"#94a3b8"}}>{l}</span><span style={{fontWeight:600}}>{v}</span></div>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:"#f8f9fa"}}>
+                <div style={{padding:"14px 16px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,background:"#fff",borderBottom:"1px solid #f1f5f9"}}>
+                  <span style={{fontSize:13,fontWeight:600}}>Paradas sin asignar <span style={{color:"#94a3b8",fontWeight:400}}>({unassignedAll.length})</span></span>
+                  <Btn onClick={()=>setModal({type:"addStop"})} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nueva parada</Btn>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+                  {unassignedAll.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:48}}>✓ Todas las paradas están asignadas</div>}
+                  {[...unassignedAll].sort((a,b)=>PO[a.priority]-PO[b.priority]).map(s=>{
+                    const c=clients.find(x=>x.id===s.client_id)||{};
+                    const prods=(s.products||[]).map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:"?";}).join(", ");
+                    return(
+                      <div key={s.id} style={{background:"#fff",borderRadius:12,padding:"13px 15px",marginBottom:8,border:"1px solid #f1f5f9",position:"relative",transition:"box-shadow .15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 10px rgba(0,0,0,0.06)"}
+                        onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                        <div style={{position:"absolute",left:0,top:12,bottom:12,width:3,borderRadius:4,background:PC[s.priority]}}/>
+                        <div style={{paddingLeft:10}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
+                            <PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>
+                            <div style={{marginLeft:"auto",display:"flex",gap:5}}>
+                              <button onClick={()=>setModal({type:"editStop",data:s})} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                              <button onClick={()=>setConfirm({msg:`¿Eliminar parada de ${c.name||"este cliente"}?`,fn:()=>deleteStop(s.id)})} style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
+                            </div>
+                          </div>
+                          <div style={{fontSize:13,fontWeight:600,marginBottom:3}}>{c.name||"Cliente no encontrado"}</div>
+                          <div style={{fontSize:12,color:"#64748b",marginBottom:4}}>{c.address}</div>
+                          <div style={{fontSize:12,color:"#6366f1"}}>📦 {prods}</div>
+                          {s.notes&&<div style={{fontSize:11,color:"#94a3b8",marginTop:3}}>📝 {s.notes}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* CLIENTS */}
+          {page==="clients"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Clientes <span style={{color:"#94a3b8",fontWeight:400}}>({clients.length})</span></span>
+                <Btn onClick={()=>setModal({type:"addClient"})} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo cliente</Btn>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+                  {clients.map(c=>(
+                    <div key={c.id} style={{background:"#fff",borderRadius:12,padding:16,border:"1px solid #f1f5f9",animation:"fadeIn .2s ease"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                        <div style={{width:38,height:38,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#6366f1"}}>{initials(c.name)}</div>
+                        <div style={{display:"flex",gap:5}}>
+                          <button onClick={()=>setModal({type:"editClient",data:c})} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                          <button onClick={()=>setConfirm({msg:`¿Eliminar cliente ${c.name}?`,fn:()=>deleteClient(c.id)})} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
+                        </div>
+                      </div>
+                      <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{c.name}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:3}}>📍 {c.address}</div>
+                      <div style={{fontSize:12,color:"#64748b",marginBottom:c.notes?6:0}}>📞 {c.phone||"—"}</div>
+                      {c.notes&&<div style={{fontSize:11,color:"#94a3b8",padding:"4px 8px",background:"#f8fafc",borderRadius:6}}>📝 {c.notes}</div>}
+                      {(c.lat||c.lng)&&<div style={{fontSize:10,color:"#cbd5e1",marginTop:4}}>📌 {c.lat}, {c.lng}</div>}
+                    </div>
+                  ))}
+                  {clients.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin clientes.</div>}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* PRODUCTS */}
+          {page==="products"&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+                <span style={{fontSize:14,fontWeight:600}}>Productos <span style={{color:"#94a3b8",fontWeight:400}}>({products.length})</span></span>
+                <Btn onClick={()=>setModal({type:"addProduct"})} variant="primary" style={{fontSize:12,padding:"6px 14px"}}>+ Nuevo producto</Btn>
+              </div>
+              <div style={{flex:1,overflowY:"auto",padding:20}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
+                  {products.map(p=>(
+                    <div key={p.id} style={{background:"#fff",borderRadius:12,padding:14,border:"1px solid #f1f5f9",display:"flex",gap:12,alignItems:"center"}}>
+                      <div style={{width:40,height:40,borderRadius:10,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📦</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div>
+                        <div style={{fontSize:11,color:"#94a3b8"}}>{p.description}</div>
+                        <div style={{fontSize:10,color:"#6366f1",marginTop:2,fontWeight:500}}>/{p.unit}</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        <button onClick={()=>setModal({type:"editProduct",data:p})} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #e2e8f0",background:"#fff",fontSize:11,cursor:"pointer"}}>✏️</button>
+                        <button onClick={()=>setConfirm({msg:`¿Eliminar "${p.name}"?`,fn:()=>deleteProduct(p.id)})} style={{padding:"4px 7px",borderRadius:6,border:"1px solid #fee2e2",background:"#fff",fontSize:11,cursor:"pointer"}}>🗑️</button>
+                      </div>
+                    </div>
+                  ))}
+                  {products.length===0&&<div style={{color:"#e2e8f0",fontSize:13,gridColumn:"1/-1",textAlign:"center",marginTop:40}}>Sin productos.</div>}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* DRIVER DETAIL */}
+      {detailDrv&&(
+        <DriverDetail driver={detailDrv} stops={stops} clients={clients} products={products} workDate={workDate} depot={depot}
+          onClose={()=>setDetailDrv(null)}
+          onAddStop={()=>setModal({type:"addStop"})}
+          onOptimize={handleOptimize}
+          onDispatch={handleDispatch}
+          onRefresh={fetchAll}
+        />
+      )}
+
+      {/* TV MAP */}
+      {showTV&&<TVMap drivers={drivers} stops={stops} clients={clients} depot={depot} workDate={workDate} onClose={()=>setShowTV(false)} onRefresh={fetchAll}/>}
+
+      {/* HISTORY */}
+      {showHistory&&<HistoryModal onClose={()=>setShowHistory(false)} workDate={workDate} onLoadDate={d=>{setWorkDate(d);t_(`Viendo ruta del ${fmtDate(d)}`);}}/>}
+
+      {/* MODALS */}
+      {modal?.type==="addStop"    &&<StopModal    clients={clients} products={products} workDate={workDate} onClose={()=>setModal(null)} onSave={saveStop}/>}
+      {modal?.type==="editStop"   &&<StopModal    initial={modal.data} clients={clients} products={products} workDate={workDate} onClose={()=>setModal(null)} onSave={saveStop}/>}
+      {modal?.type==="addClient"  &&<ClientModal  onClose={()=>setModal(null)} onSave={saveClient}/>}
+      {modal?.type==="editClient" &&<ClientModal  initial={modal.data} onClose={()=>setModal(null)} onSave={saveClient}/>}
+      {modal?.type==="addProduct" &&<ProductModal onClose={()=>setModal(null)} onSave={saveProduct}/>}
+      {modal?.type==="editProduct"&&<ProductModal initial={modal.data} onClose={()=>setModal(null)} onSave={saveProduct}/>}
+      {modal?.type==="addDriver"  &&<DriverModal  allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
+      {modal?.type==="editDriver" &&<DriverModal  initial={modal.data} allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
+      {modal?.type==="depot"      &&<DepotModal   initial={depot} onClose={()=>setModal(null)} onSave={saveDepot}/>}
+
+      {confirm&&<Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
+      {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
