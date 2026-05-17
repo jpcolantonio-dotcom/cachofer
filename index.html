@@ -86,7 +86,7 @@ function buildMapsUrl(stops,clients,depot=null){
 }
 
 /* ── LEAFLET ─────────────────────────────────────────────────────────────── */
-function initMap(el,center=[-34.61,-58.38],zoom=13){
+function initMap(el,center=[-38.71,-62.27],zoom=13){
   const map=L.map(el,{zoomControl:true,attributionControl:false}).setView(center,zoom);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
   return map;
@@ -191,7 +191,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
   useEffect(()=>{
     if(!ref.current)return;
     if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
-    const map=initMap(ref.current,[-34.61,-58.38],12);
+    const map=initMap(ref.current,[-38.71,-62.27],13);
     mapRef.current=map;
     redraw(map);
     setTimeout(()=>map.invalidateSize(),150);
@@ -600,9 +600,27 @@ function App(){
     return true;
   }
 
-  useEffect(()=>{fetchAll();},[]);
+  useEffect(()=>{
+    fetchAll();
+    // Cargar depot desde Supabase (fuente de verdad compartida)
+    dbGet("config",{key:"depot"}).then(({data})=>{
+      if(data&&data[0]?.value){
+        const d=data[0].value;
+        if(d.address){
+          setDepot(d);
+          localStorage.setItem("cachofer_depot",JSON.stringify(d));
+        }
+      }
+    });
+  },[]);
 
-  function saveDepot(d){setDepot(d);localStorage.setItem("cachofer_depot",JSON.stringify(d));t_("Depósito guardado ✓");}
+  async function saveDepot(d){
+    setDepot(d);
+    localStorage.setItem("cachofer_depot",JSON.stringify(d));
+    // También guardar en Supabase para que el chofer lo lea
+    await dbUpdate("config",{value:d,updated_at:new Date().toISOString()},"key","depot");
+    t_("Depósito guardado ✓");
+  }
 
   async function saveDriver(d){
     if(drivers.find(x=>x.id===d.id)){await dbUpdate("drivers",d,"id",d.id);setDrivers(p=>p.map(x=>x.id===d.id?d:x));if(detailDrv?.id===d.id)setDetailDrv(d);}
