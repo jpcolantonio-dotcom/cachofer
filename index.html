@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -133,7 +132,7 @@ function initMap(ref, center=[-34.61,-58.38], zoom=13){
 }
 
 // Mapa de ruta de un chofer (columna derecha en pantalla de chofer)
-function RouteMap({stops,clients,depot=null,driverColor="#6366f1"}){
+function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null}){
   const ref=useRef(null); const mapRef=useRef(null);
   useEffect(()=>{
     if(!ref.current) return;
@@ -214,12 +213,33 @@ function AllDriversMap({drivers,stops,clients,depot,workDate,onClose}){
       });
 
       if(drvPts.length>1){
-        // Línea de ruta con color del chofer
         L.polyline(drvPts,{color,weight:3,dashArray:"8,5",opacity:.75}).addTo(map);
-        // Etiqueta con nombre del chofer en la primera parada
         const [lat,lng]=drvPts[0];
         const labelIcon=L.divIcon({className:"",html:`<div style="background:${color};color:#fff;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.25);border:1.5px solid #fff">${dr.name}</div>`,iconSize:[0,0],iconAnchor:[-4,14]});
         L.marker([lat,lng],{icon:labelIcon,interactive:false}).addTo(map);
+      }
+
+      // 🚛 Ícono del chofer en tiempo real (posición GPS actual)
+      if(dr.current_lat&&dr.current_lng){
+        allPts.push([dr.current_lat,dr.current_lng]);
+        const minutesAgo=dr.location_updated_at?Math.round((Date.now()-new Date(dr.location_updated_at))/60000):null;
+        const isRecent=minutesAgo!==null&&minutesAgo<5;
+        const truckIcon=L.divIcon({className:"",html:`
+          <div style="display:flex;flex-direction:column;align-items:center">
+            <div style="width:42px;height:42px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;font-size:20px;position:relative">
+              🚛
+              ${isRecent?`<div style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:#10b981;border:2px solid #fff"></div>`:`<div style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff"></div>`}
+            </div>
+            <div style="background:${color};color:#fff;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;margin-top:3px;box-shadow:0 2px 5px rgba(0,0,0,0.3)">${dr.avatar}</div>
+          </div>`,iconSize:[42,56],iconAnchor:[21,56]});
+        const updatedText=minutesAgo===0?"ahora mismo":minutesAgo===null?"desconocido":`hace ${minutesAgo} min`;
+        L.marker([dr.current_lat,dr.current_lng],{icon:truckIcon,zIndexOffset:1000})
+          .addTo(map)
+          .bindPopup(`<div style="font-family:Inter,sans-serif;min-width:160px">
+            <b style="color:${color}">${dr.name}</b><br>
+            <span style="font-size:11px;color:#888">📍 Última posición: ${updatedText}</span><br>
+            <span style="font-size:11px;color:${isRecent?"#10b981":"#f59e0b"}">${isRecent?"🟢 En ruta activa":"🟡 Sin señal reciente"}</span>
+          </div>`);
       }
     });
 
@@ -639,7 +659,7 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
                   <span>Asigná paradas para ver la ruta</span>
                   <span style={{fontSize:11,color:"#e2e8f0"}}>Los clientes necesitan coordenadas<br/>(lat/lng) para aparecer en el mapa</span>
                 </div>
-              :<RouteMap stops={drvStops} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"}/>
+              :<RouteMap stops={drvStops} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"} driver={driver}/>
             }
           </div>
         </div>

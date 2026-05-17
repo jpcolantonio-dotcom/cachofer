@@ -133,6 +133,34 @@ function App(){
     setScreen(stops.length>0?"route":"route");
   }
 
+  // GPS: enviar ubicación cada 15 segundos cuando está en ruta
+  useEffect(()=>{
+    if(!driver||screen==="login"||screen==="done") return;
+    if(!navigator.geolocation) return;
+
+    let watchId = null;
+    let lastSend = 0;
+
+    watchId = navigator.geolocation.watchPosition(
+      async (pos)=>{
+        const now = Date.now();
+        if(now - lastSend < 15000) return; // max cada 15s
+        lastSend = now;
+        const {latitude:lat, longitude:lng} = pos.coords;
+        await dbUpdate("drivers",{
+          current_lat: lat,
+          current_lng: lng,
+          location_updated_at: new Date().toISOString(),
+          status: "en_ruta"
+        },"id", driver.id);
+      },
+      (err)=>console.log("GPS error:",err.message),
+      {enableHighAccuracy:true, maximumAge:10000, timeout:10000}
+    );
+
+    return()=>{ if(watchId) navigator.geolocation.clearWatch(watchId); };
+  },[driver,screen]);
+
   // Polling every 30s when in route
   useEffect(()=>{
     if(!driver||screen==="login")return;
