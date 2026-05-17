@@ -117,14 +117,15 @@ function localOptimize(stops, clients){
   return result.map((s,i)=>({id:s.id,route_order:i}));
 }
 
-function buildMapsUrl(stops, clients){
+function buildMapsUrl(stops, clients, depot=null){
   const pts=stops.map(s=>{ const c=clients.find(x=>x.id===s.client_id); return c?.address?encodeURIComponent(c.address):null; }).filter(Boolean);
   if(!pts.length)return null;
-  return `https://www.google.com/maps/dir/?api=1&destination=${pts[pts.length-1]}&waypoints=${pts.slice(0,-1).join("|")}&travelmode=driving`;
+  const origin=depot?.address?`&origin=${encodeURIComponent(depot.address)}`:"&origin=Mi+ubicaci%C3%B3n";
+  return `https://www.google.com/maps/dir/?api=1${origin}&destination=${pts[pts.length-1]}&waypoints=${pts.slice(0,-1).join("|")}&travelmode=driving`;
 }
 
 /* ── LEAFLET MAP ─────────────────────────────────────────────────────────── */
-function RouteMap({stops,clients}){
+function RouteMap({stops,clients,depot=null}){
   const ref=useRef(null); const mapRef=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
@@ -132,6 +133,11 @@ function RouteMap({stops,clients}){
     const map=L.map(ref.current,{zoomControl:true}).setView([-34.61,-58.38],13);
     mapRef.current=map;
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OSM",maxZoom:19}).addTo(map);
+    // Depot marker
+    if(depot?.lat&&depot?.lng){
+      const dIcon=L.divIcon({className:"",html:`<div style="width:36px;height:36px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3)">🏭</div>`,iconSize:[36,36],iconAnchor:[18,18]});
+      L.marker([depot.lat,depot.lng],{icon:dIcon}).addTo(map).bindPopup(`<b>🏭 ${depot.name||"Depósito"}</b><br>${depot.address}<br><span style="color:#888;font-size:11px">Punto de partida</span>`);
+    }
     const pts=[];
     stops.forEach((s,i)=>{
       const c=clients.find(x=>x.id===s.client_id);
@@ -355,7 +361,7 @@ function HistoryModal({onClose,workDate,clients,products,onLoadDate}){
 }
 
 /* ── DRIVER DETAIL ───────────────────────────────────────────────────────── */
-function DriverDetail({driver,stops,clients,products,workDate,onClose,onAddStop,onOptimize,onDispatch,onRefresh}){
+function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAddStop,onOptimize,onDispatch,onRefresh}){
   const [search,setSearch]=useState("");
   const drvStops=[...stops.filter(s=>s.driver_id===driver.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
   const unassigned=stops.filter(s=>s.work_date===workDate&&!s.driver_id&&s.status!=="entregado");
@@ -363,7 +369,7 @@ function DriverDetail({driver,stops,clients,products,workDate,onClose,onAddStop,
     const c=clients.find(x=>x.id===s.client_id)||{};
     return (c.name||"").toLowerCase().includes(search.toLowerCase())||(c.address||"").toLowerCase().includes(search.toLowerCase());
   });
-  const mapsUrl=buildMapsUrl(drvStops,clients);
+  const mapsUrl=buildMapsUrl(drvStops,clients,depot);
 
   async function assign(stopId){
     await sb.from("stops").update({driver_id:driver.id,route_order:drvStops.length}).eq("id",stopId);
@@ -486,12 +492,39 @@ function DriverDetail({driver,stops,clients,products,workDate,onClose,onAddStop,
           <div style={{flex:1,padding:10}}>
             {drvStops.length===0
               ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8}}><span style={{fontSize:40}}>🗺️</span>Asigná paradas para ver la ruta</div>
-              :<RouteMap stops={drvStops} clients={clients}/>
+              :<RouteMap stops={drvStops} clients={clients} depot={depot}/>
             }
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/* ── DEPOT MODAL ─────────────────────────────────────────────────────────── */
+function DepotModal({initial,onClose,onSave}){
+  const [f,setF]=useState(initial||{name:"",address:"",lat:"",lng:""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <Modal onClose={onClose} w={460}>
+      <MHead title="⚙️ Configurar depósito" onClose={onClose}/>
+      <div style={{background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#0284c7"}}>
+        El depósito es el punto de partida de todas las rutas. Se usa para calcular la ruta en Google Maps.
+      </div>
+      <Field label="Nombre del depósito"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Depósito Central Bahía Blanca"/></Field>
+      <Field label="Dirección completa"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Alem 1234, Bahía Blanca, Buenos Aires"/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Latitud (opcional)"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-38.7183"/></Field>
+        <Field label="Longitud (opcional)"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-62.2663"/></Field>
+      </div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>
+        Las coordenadas son opcionales pero mejoran la precisión del mapa. Buscalas en Google Maps.
+      </div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{if(!f.address)return;onSave({...f,lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.address}>Guardar depósito</Btn>
+      </div>
+    </Modal>
   );
 }
 
@@ -509,6 +542,9 @@ function App(){
   const [modal,setModal]       = useState(null);
   const [confirm,setConfirm]   = useState(null);
   const [showHistory,setShowHistory] = useState(false);
+  const [depot,setDepot]           = useState(()=>{ try{return JSON.parse(localStorage.getItem("cachofer_depot"))||{name:"",address:"",lat:"",lng:""};}catch{return{name:"",address:"",lat:"",lng:""};} });
+
+  function saveDepot(d){ setDepot(d); localStorage.setItem("cachofer_depot",JSON.stringify(d)); t_("Depósito guardado ✓"); }
   const [connected,setConnected] = useState(false);
 
   const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
@@ -636,6 +672,10 @@ function App(){
               style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:12,fontWeight:500,color:"#64748b",cursor:"pointer"}}>
               🗂️ Historial
             </button>
+            <button onClick={()=>setModal({type:"depot"})}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:9,border:`1.5px solid ${depot?.address?"#bbf7d0":"#fee2e2"}`,background:depot?.address?"#f0fdf4":"#fff",fontSize:12,fontWeight:500,color:depot?.address?"#16a34a":"#ef4444",cursor:"pointer"}} title="Configurar depósito de salida">
+              🏭 {depot?.address ? depot.name||"Depósito configurado" : "Sin depósito ⚠"}
+            </button>
           </div>
         )}
 
@@ -654,6 +694,9 @@ function App(){
           {navItem("clients","Clientes","👤")}
           {navItem("products","Productos","📦")}
           <div style={{flex:1}}/>
+          <button onClick={()=>setModal({type:"depot"})} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:"transparent",color:"#64748b",fontSize:13,fontWeight:400,width:"100%",textAlign:"left",cursor:"pointer"}}>
+            <span style={{fontSize:16}}>⚙️</span>Depósito
+          </button>
           <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px"}}>CachoFer v5 · Supabase</div>
         </nav>
 
@@ -802,6 +845,7 @@ function App(){
         <DriverDetail
           driver={detailDrv} stops={stops} clients={clients} products={products} workDate={workDate}
           onClose={()=>setDetailDrv(null)}
+          depot={depot}
           onAddStop={()=>setModal({type:"addStop"})}
           onOptimize={handleOptimize}
           onDispatch={handleDispatch}
@@ -820,7 +864,8 @@ function App(){
       {modal?.type==="addProduct" &&<ProductModal onClose={()=>setModal(null)} onSave={saveProduct}/>}
       {modal?.type==="editProduct"&&<ProductModal initial={modal.data} onClose={()=>setModal(null)} onSave={saveProduct}/>}
       {modal?.type==="addDriver"  &&<DriverModal  allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
-      {modal?.type==="editDriver" &&<DriverModal  initial={modal.data} allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
+      {modal?.type==="editDriver" && <DriverModal initial={modal.data} allDrivers={drivers} onClose={()=>setModal(null)} onSave={saveDriver}/>}
+      {modal?.type==="depot" && <DepotModal initial={depot} onClose={()=>setModal(null)} onSave={saveDepot}/>}
 
       {confirm&&<Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
       {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
