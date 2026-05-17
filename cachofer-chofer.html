@@ -8,7 +8,7 @@
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -31,7 +31,22 @@ const { useState, useEffect, useRef } = React;
 /* ── SUPABASE ────────────────────────────────────────────────────────────── */
 const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
-const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+const H = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY, "Content-Type": "application/json", "Prefer": "return=representation" };
+async function dbGet(table,filters={},orderBy=null,orderDesc=false){ let url=SUPA_URL+"/rest/v1/"+table+"?select=*"; Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);}); if(orderBy)url+="&order="+orderBy+(orderDesc?".desc":".asc"); const r=await fetch(url,{headers:H}); const d=await r.json(); return{data:Array.isArray(d)?d:[],error:r.ok?null:d}; }
+async function dbUpdate(table,data,col,val){ const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:H,body:JSON.stringify(data)}); return{error:r.ok?null:await r.json()}; }
+const sb = {
+  from:(t)=>({
+    select:(c="*")=>({
+      order:(col,o={})=>dbGet(t,{},col,o.ascending===false),
+      eq:(col,val)=>({order:(c2,o={})=>dbGet(t,{[col]:val},c2,o.ascending===false), then:(fn)=>dbGet(t,{[col]:val}).then(fn)}),
+      then:(fn)=>dbGet(t,{}).then(fn),
+    }),
+    update:(d)=>({eq:(col,val)=>dbUpdate(t,d,col,val)}),
+  }),
+  channel:()=>({on:function(){return this;},subscribe:()=>{}}),
+  removeChannel:()=>{},
+};
 
 const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
 const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
