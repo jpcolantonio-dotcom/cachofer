@@ -651,21 +651,50 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
 /* ── DEPOT MODAL ─────────────────────────────────────────────────────────── */
 function DepotModal({initial,onClose,onSave}){
   const [f,setF]=useState(initial||{name:"",address:"",lat:"",lng:""});
+  const [geocoding,setGeocoding]=useState(false);
+  const [geoMsg,setGeoMsg]=useState("");
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  async function autoGeocode(){
+    if(!f.address) return;
+    setGeocoding(true); setGeoMsg("");
+    try{
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(f.address)}&format=json&limit=1`,{headers:{"Accept-Language":"es","User-Agent":"CachoFer/1.0"}});
+      const d=await r.json();
+      if(d.length>0){
+        setF(p=>({...p,lat:parseFloat(d[0].lat).toFixed(6),lng:parseFloat(d[0].lon).toFixed(6)}));
+        setGeoMsg("✓ "+d[0].display_name.split(",").slice(0,2).join(","));
+      } else {
+        setGeoMsg("⚠ No se encontró. Probá con más detalle.");
+      }
+    }catch(e){ setGeoMsg("⚠ Error al buscar."); }
+    setGeocoding(false);
+  }
+
   return(
-    <Modal onClose={onClose} w={460}>
+    <Modal onClose={onClose} w={480}>
       <MHead title="⚙️ Configurar depósito" onClose={onClose}/>
       <div style={{background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#0284c7"}}>
-        El depósito es el punto de partida de todas las rutas. Se usa para calcular la ruta en Google Maps.
+        El depósito es el punto de partida de todas las rutas.
       </div>
       <Field label="Nombre del depósito"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Ej: Depósito Central Bahía Blanca"/></Field>
-      <Field label="Dirección completa"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Alem 1234, Bahía Blanca, Buenos Aires"/></Field>
+      <Field label="Dirección completa">
+        <div style={{display:"flex",gap:8}}>
+          <input value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Alem 1234, Bahía Blanca, Buenos Aires"
+            style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/>
+          <button onClick={autoGeocode} disabled={geocoding||!f.address}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:geocoding?"#f1f5f9":"#111",color:geocoding?"#94a3b8":"#fff",fontSize:12,fontWeight:500,cursor:geocoding||!f.address?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {geocoding?"Buscando…":"📍 Buscar"}
+          </button>
+        </div>
+        {geoMsg&&<div style={{fontSize:11,marginTop:5,color:geoMsg.startsWith("✓")?"#10b981":"#f59e0b",lineHeight:1.4}}>{geoMsg}</div>}
+      </Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Latitud (opcional)"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-38.7183"/></Field>
-        <Field label="Longitud (opcional)"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-62.2663"/></Field>
+        <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-38.7183"/></Field>
+        <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-62.2663"/></Field>
       </div>
-      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>
-        Las coordenadas son opcionales pero mejoran la precisión del mapa. Buscalas en Google Maps.
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:14,marginTop:-8}}>
+        Ponés la dirección y tocás 📍 Buscar — las coordenadas se cargan solas.
       </div>
       <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
         <Btn onClick={onClose}>Cancelar</Btn>
