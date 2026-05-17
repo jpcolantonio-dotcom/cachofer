@@ -329,11 +329,38 @@ function App(){
     return()=>navigator.geolocation.clearWatch(id);
   },[driver,screen,clients]);
 
-  // Poll stops cada 30s
+  // Realtime: recarga cuando el admin cambia la ruta
   useEffect(()=>{
     if(!driver||screen==="login")return;
-    const iv=setInterval(()=>loadStops(driver.id),30000);
-    return()=>clearInterval(iv);
+
+    // Polling cada 60 minutos (backup)
+    const iv=setInterval(()=>{
+      loadStops(driver.id);
+      t_("🔄 Ruta actualizada");
+    },60*60*1000);
+
+    // Supabase Realtime via polling rápido cada 10s
+    // (sin SDK, usamos polling frecuente como sustituto)
+    const rt=setInterval(async()=>{
+      const{data}=await dbGet("stops",{driver_id:driver.id,work_date:todayStr()},"route_order");
+      if(!data)return;
+      // Solo actualizar si hay cambios reales
+      setMyStops(prev=>{
+        const prevIds=prev.map(s=>s.id+s.status+s.route_order).join();
+        const newIds=data.map(s=>s.id+s.status+s.route_order).join();
+        if(prevIds!==newIds){
+          // Hay cambios — notificar
+          const newStops=data.filter(s=>!prev.find(p=>p.id===s.id));
+          const removedStops=prev.filter(s=>!data.find(d=>d.id===s.id));
+          if(newStops.length>0)t_(`📦 +${newStops.length} parada${newStops.length>1?"s":""} nueva${newStops.length>1?"s":""}!`);
+          if(removedStops.length>0)t_(`🗑 Se eliminó una parada`);
+          return data;
+        }
+        return prev;
+      });
+    },10000);
+
+    return()=>{clearInterval(iv);clearInterval(rt);};
   },[driver,screen]);
 
   async function confirmDelivery(sig,stopIdx=curIdx){
