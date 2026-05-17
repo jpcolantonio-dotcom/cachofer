@@ -465,6 +465,144 @@ function Confirm({msg,onConfirm,onClose}){
   );
 }
 
+/* ── STATS PAGE ──────────────────────────────────────────────────────────── */
+function StatsPage({stops,drivers,clients,workDate}){
+  const [selDate,setSelDate]=useState(workDate);
+  const [selDriver,setSelDriver]=useState("all");
+
+  const dayStops=stops.filter(s=>s.work_date===selDate&&(selDriver==="all"||s.driver_id===selDriver));
+  const delivered=dayStops.filter(s=>s.status==="entregado");
+
+  // Tiempos por parada
+  function stopTime(s){
+    if(!s.arrived_at||!s.delivered_at)return null;
+    return Math.round((new Date(s.delivered_at)-new Date(s.arrived_at))/60000);
+  }
+  function fmt(min){if(min===null)return"—";if(min<1)return"<1 min";return min+" min";}
+
+  // Stats por chofer
+  const driverStats=drivers.map(dr=>{
+    const ds=delivered.filter(s=>s.driver_id===dr.id);
+    const times=ds.map(s=>stopTime(s)).filter(t=>t!==null);
+    const avg=times.length?Math.round(times.reduce((a,b)=>a+b,0)/times.length):null;
+    const total=dayStops.filter(s=>s.driver_id===dr.id).length;
+    const done=ds.length;
+    return{dr,total,done,avg,times};
+  }).filter(x=>x.total>0);
+
+  const todayDelivered=delivered.filter(s=>s.arrived_at&&s.delivered_at);
+  const allTimes=todayDelivered.map(s=>stopTime(s)).filter(t=>t!==null);
+  const avgAll=allTimes.length?Math.round(allTimes.reduce((a,b)=>a+b,0)/allTimes.length):null;
+
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {/* Header */}
+      <div style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:12,background:"#fff",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+        <span style={{fontSize:14,fontWeight:600,flex:1}}>📊 Estadísticas</span>
+        <input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)}
+          style={{border:"1.5px solid #e2e8f0",borderRadius:8,padding:"6px 10px",fontSize:13,outline:"none",cursor:"pointer"}}/>
+        <select value={selDriver} onChange={e=>setSelDriver(e.target.value)}
+          style={{border:"1.5px solid #e2e8f0",borderRadius:8,padding:"6px 10px",fontSize:13,outline:"none",background:"#fff"}}>
+          <option value="all">Todos los choferes</option>
+          {drivers.map(dr=><option key={dr.id} value={dr.id}>{dr.name}</option>)}
+        </select>
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",padding:20}}>
+
+        {/* Resumen del día */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:24}}>
+          {[
+            ["📦","Paradas totales",dayStops.length,"#6366f1"],
+            ["✅","Entregadas",delivered.length,"#10b981"],
+            ["⏳","Pendientes",dayStops.length-delivered.length,"#f97316"],
+            ["⏱","Tiempo prom.",fmt(avgAll),"#3b82f6"],
+          ].map(([ic,label,val,color])=>(
+            <div key={label} style={{background:"#fff",borderRadius:14,padding:"16px 18px",border:"1px solid #f1f5f9"}}>
+              <div style={{fontSize:22,marginBottom:6}}>{ic}</div>
+              <div style={{fontSize:22,fontWeight:800,color,marginBottom:2}}>{val}</div>
+              <div style={{fontSize:11,color:"#94a3b8"}}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Por chofer */}
+        {driverStats.length>0&&(
+          <>
+            <div style={{fontSize:12,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Por chofer</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
+              {driverStats.map(({dr,total,done,avg})=>(
+                <div key={dr.id} style={{background:"#fff",borderRadius:12,padding:"14px 16px",border:"1px solid #f1f5f9",display:"flex",alignItems:"center",gap:14}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>{dr.name}</div>
+                    <div style={{height:6,background:"#f1f5f9",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${total?Math.round(done/total*100):0}%`,background:dr.color||"#6366f1",borderRadius:4,transition:"width .5s ease"}}/>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:15,fontWeight:700}}>{done}/{total}</div>
+                    <div style={{fontSize:11,color:"#94a3b8"}}>entregadas</div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0,borderLeft:"1px solid #f1f5f9",paddingLeft:14}}>
+                    <div style={{fontSize:15,fontWeight:700,color:"#3b82f6"}}>{fmt(avg)}</div>
+                    <div style={{fontSize:11,color:"#94a3b8"}}>prom/parada</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Detalle por parada */}
+        {todayDelivered.length>0&&(
+          <>
+            <div style={{fontSize:12,fontWeight:600,color:"#64748b",textTransform:"uppercase",letterSpacing:.5,marginBottom:12}}>Detalle por parada</div>
+            <div style={{background:"#fff",borderRadius:14,border:"1px solid #f1f5f9",overflow:"hidden"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto auto",padding:"10px 16px",background:"#f8fafc",fontSize:11,fontWeight:600,color:"#94a3b8",textTransform:"uppercase",letterSpacing:.5,gap:8}}>
+                <span>Cliente</span><span>Chofer</span><span>Llegada</span><span>Entrega</span><span>Tiempo</span>
+              </div>
+              {[...dayStops].sort((a,b)=>{
+                if(!a.arrived_at)return 1;if(!b.arrived_at)return -1;
+                return new Date(a.arrived_at)-new Date(b.arrived_at);
+              }).map(s=>{
+                const c=clients.find(x=>x.id===s.client_id)||{};
+                const dr=drivers.find(x=>x.id===s.driver_id)||{};
+                const t=stopTime(s);
+                const done=s.status==="entregado";
+                const fmt2=ts=>ts?new Date(ts).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"—";
+                return(
+                  <div key={s.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto auto",padding:"10px 16px",borderTop:"1px solid #f8fafc",fontSize:13,gap:8,alignItems:"center",opacity:done?1:.6}}>
+                    <div>
+                      <div style={{fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
+                      <div style={{fontSize:10,color:"#94a3b8"}}>{s.priority}</div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <div style={{width:8,height:8,borderRadius:"50%",background:dr.color||"#94a3b8",flexShrink:0}}/>
+                      <span style={{fontSize:12,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dr.name||"—"}</span>
+                    </div>
+                    <div style={{fontSize:12,color:"#94a3b8",whiteSpace:"nowrap"}}>{fmt2(s.arrived_at)}</div>
+                    <div style={{fontSize:12,color:done?"#10b981":"#94a3b8",whiteSpace:"nowrap"}}>{done?fmt2(s.delivered_at):"Pend."}</div>
+                    <div style={{fontSize:12,fontWeight:600,color:t!==null?(t<5?"#10b981":t<15?"#f59e0b":"#ef4444"):"#94a3b8",whiteSpace:"nowrap"}}>{fmt(t)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {dayStops.length===0&&(
+          <div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:60}}>
+            <div style={{fontSize:40,marginBottom:12}}>📊</div>
+            Sin datos para esta fecha.<br/>
+            <span style={{fontSize:11}}>Las estadísticas se generan automáticamente cuando los choferes usan la app.</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── DRIVER DETAIL ───────────────────────────────────────────────────────── */
 function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAddStop,onOptimize,onDispatch,onRefresh}){
   const drvStops=[...stops.filter(s=>s.driver_id===driver.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
@@ -718,6 +856,7 @@ function App(){
           {navItem("dispatch","Despacho","🚛")}
           {navItem("clients","Clientes","👤")}
           {navItem("products","Productos","📦")}
+          {navItem("stats","Estadísticas","📊")}
           <div style={{flex:1}}/>
           <button onClick={()=>setModal({type:"depot"})} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:"transparent",color:"#64748b",fontSize:13,fontWeight:400,width:"100%",textAlign:"left",cursor:"pointer"}}><span style={{fontSize:16}}>⚙️</span>Depósito</button>
           <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px"}}>CA-Chofer v6</div>
@@ -830,6 +969,10 @@ function App(){
                 </div>
               </div>
             </div>
+          )}
+          {/* STATS */}
+          {page==="stats"&&(
+            <StatsPage stops={stops} drivers={drivers} clients={clients} workDate={workDate}/>
           )}
           {/* PRODUCTS */}
           {page==="products"&&(
