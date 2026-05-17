@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -338,19 +339,53 @@ function StopModal({initial,clients,products,workDate,onClose,onSave}){
 
 function ClientModal({initial,onClose,onSave}){
   const [f,setF]=useState(initial||{name:"",address:"",phone:"",notes:"",lat:"",lng:""});
+  const [geocoding,setGeocoding]=useState(false);
+  const [geoMsg,setGeoMsg]=useState("");
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  async function autoGeocode(){
+    if(!f.address) return;
+    setGeocoding(true); setGeoMsg("");
+    try{
+      const query=encodeURIComponent(f.address);
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,{headers:{"Accept-Language":"es","User-Agent":"CachoFer/1.0"}});
+      const d=await r.json();
+      if(d.length>0){
+        setF(p=>({...p,lat:parseFloat(d[0].lat).toFixed(6),lng:parseFloat(d[0].lon).toFixed(6)}));
+        setGeoMsg("✓ Coordenadas encontradas: "+d[0].display_name.split(",").slice(0,2).join(","));
+      } else {
+        setGeoMsg("⚠ No se encontró la dirección. Probá con más detalle.");
+      }
+    }catch(e){
+      setGeoMsg("⚠ Error al buscar. Verificá tu conexión.");
+    }
+    setGeocoding(false);
+  }
+
   return(
-    <Modal onClose={onClose} w={460}>
+    <Modal onClose={onClose} w={480}>
       <MHead title={initial?.id?"Editar cliente":"Nuevo cliente"} onClose={onClose}/>
       <Field label="Nombre"><Inp value={f.name} onChange={e=>s("name",e.target.value)} placeholder="Nombre o razón social"/></Field>
-      <Field label="Dirección"><Inp value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires"/></Field>
+      <Field label="Dirección">
+        <div style={{display:"flex",gap:8}}>
+          <input value={f.address} onChange={e=>s("address",e.target.value)} placeholder="Av. Corrientes 1234, Buenos Aires"
+            style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none"}}/>
+          <button onClick={autoGeocode} disabled={geocoding||!f.address}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:geocoding?"#f1f5f9":"#111",color:geocoding?"#94a3b8":"#fff",fontSize:12,fontWeight:500,cursor:geocoding||!f.address?"not-allowed":"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {geocoding?"Buscando…":"📍 Buscar"}
+          </button>
+        </div>
+        {geoMsg&&<div style={{fontSize:11,marginTop:5,color:geoMsg.startsWith("✓")?"#10b981":"#f59e0b",lineHeight:1.4}}>{geoMsg}</div>}
+      </Field>
       <Field label="Teléfono"><Inp value={f.phone} onChange={e=>s("phone",e.target.value)} type="tel" placeholder="011-xxxx-xxxx"/></Field>
-      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
+      <Field label="Notas"><textarea value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Timbre, horarios especiales…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:60}}/></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Latitud"><Inp value={f.lat||""} onChange={e=>s("lat",e.target.value)} placeholder="-34.6037"/></Field>
         <Field label="Longitud"><Inp value={f.lng||""} onChange={e=>s("lng",e.target.value)} placeholder="-58.3816"/></Field>
       </div>
-      <div style={{fontSize:11,color:"#94a3b8",marginBottom:16,marginTop:-8}}>Coordenadas opcionales para el mapa.</div>
+      <div style={{fontSize:11,color:"#94a3b8",marginBottom:14,marginTop:-8}}>
+        Ponés la dirección exacta y tocás 📍 Buscar — las coordenadas se cargan solas.
+      </div>
       <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
         <Btn onClick={onClose}>Cancelar</Btn>
         <Btn onClick={()=>{if(!f.name||!f.address)return;onSave({...f,id:initial?.id||"CL"+Date.now(),lat:parseFloat(f.lat)||null,lng:parseFloat(f.lng)||null});onClose();}} variant="primary" disabled={!f.name||!f.address}>{initial?.id?"Guardar":"Crear cliente"}</Btn>
