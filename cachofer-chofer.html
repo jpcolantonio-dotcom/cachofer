@@ -1,14 +1,20 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>CachoFer — Chofer</title>
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CachoFer">
+<meta name="theme-color" content="#111111">
+<link rel="apple-touch-icon" href="icon-512.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -18,6 +24,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer}
 input,textarea{font-family:'Inter',sans-serif}
 ::-webkit-scrollbar{width:3px}
 ::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:4px}
+textarea::placeholder,input::placeholder{color:#cbd5e1}
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -28,64 +35,43 @@ input,textarea{font-family:'Inter',sans-serif}
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
-/* ── SUPABASE ────────────────────────────────────────────────────────────── */
 const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
 
 const HG = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY };
 const HW = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY, "Content-Type": "application/json", "Prefer": "return=representation" };
-async function dbGet(table,filters={},orderBy=null){
-  let url=SUPA_URL+"/rest/v1/"+table+"?select=*";
-  Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);});
-  if(orderBy)url+="&order="+orderBy+".asc";
-  const r=await fetch(url,{method:"GET",headers:HG});
-  const d=await r.json();
-  if(!r.ok)console.error("dbGet error",table,d);
-  return{data:Array.isArray(d)?d:[],error:r.ok?null:d};
-}
-async function dbUpdate(table,data,col,val){
-  const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});
-  const d=await r.json();
-  if(!r.ok)console.error("dbUpdate error",table,d);
-  return{data:d,error:r.ok?null:d};
-}
-const sb = {
-  from:(t)=>({
-    select:()=>({
-      order:(col)=>dbGet(t,{},col),
-      eq:(col,val)=>({
-        order:(c)=>dbGet(t,{[col]:val},c),
-        then:(fn)=>dbGet(t,{[col]:val}).then(fn),
-      }),
-      then:(fn)=>dbGet(t,{}).then(fn),
-    }),
-    update:(d)=>({eq:(col,val)=>dbUpdate(t,d,col,val)}),
-  }),
-  channel:()=>({on:function(){return this;},subscribe:()=>{}}),
-  removeChannel:()=>{},
-};
 
+async function dbGet(table, filters={}, orderBy=null){
+  let url = SUPA_URL+"/rest/v1/"+table+"?select=*";
+  Object.entries(filters).forEach(([k,v])=>{ url+="&"+k+"=eq."+encodeURIComponent(v); });
+  if(orderBy) url+="&order="+orderBy+".asc";
+  const r = await fetch(url, {method:"GET", headers:HG});
+  const d = await r.json();
+  if(!r.ok) console.error("dbGet error", table, d);
+  return { data: Array.isArray(d)?d:[], error: r.ok?null:d };
+}
+async function dbUpdate(table, data, col, val){
+  const r = await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val), {method:"PATCH", headers:HW, body:JSON.stringify(data)});
+  const d = await r.json();
+  return { data:d, error:r.ok?null:d };
+}
+
+const todayStr = () => new Date().toISOString().slice(0,10);
 const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
 const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
-const todayStr = () => new Date().toISOString().slice(0,10);
 
-function PTag({p}){
-  return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;
-}
-function Spinner(){return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>;}
+function PTag({p}){ return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>; }
+function Spinner(){ return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>; }
 
-/* ── SIGNATURE PAD ───────────────────────────────────────────────────────── */
 function SigPad({onCapture,onCancel}){
-  const ref=useRef(null);
-  const drawing=useRef(false);
-  const last=useRef(null);
+  const ref=useRef(null); const drawing=useRef(false); const last=useRef(null);
   function pos(e,c){const r=c.getBoundingClientRect();const src=e.touches?e.touches[0]:e;return{x:src.clientX-r.left,y:src.clientY-r.top};}
   function start(e){e.preventDefault();drawing.current=true;last.current=pos(e,ref.current);}
   function move(e){e.preventDefault();if(!drawing.current)return;const c=ref.current,ctx=c.getContext("2d"),p=pos(e,c);ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();last.current=p;}
   function end(e){e.preventDefault();drawing.current=false;}
   function clear(){ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height);}
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:380,animation:"fadeUp .25s ease"}}>
         <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Firma del receptor</div>
         <div style={{fontSize:12,color:"#94a3b8",marginBottom:14}}>Firmá en el recuadro para confirmar la entrega</div>
@@ -102,7 +88,6 @@ function SigPad({onCapture,onCancel}){
   );
 }
 
-/* ── MAIN APP ─────────────────────────────────────────────────────────────── */
 function App(){
   const [screen,setScreen]     = useState("login");
   const [loading,setLoading]   = useState(true);
@@ -115,189 +100,169 @@ function App(){
   const [showSig,setShowSig]   = useState(false);
   const [note,setNote]         = useState("");
   const [toast,setToast]       = useState(null);
+  const [syncing,setSyncing]   = useState(false);
 
   const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),2800);};
 
-  // Load drivers and base data on mount
   useEffect(()=>{
     Promise.all([
-      sb.from("drivers").select("*").order("name"),
-      sb.from("clients").select("*"),
-      sb.from("products").select("*"),
+      dbGet("drivers",{},"name"),
+      dbGet("clients"),
+      dbGet("products",{},"name"),
     ]).then(([d,cl,pr])=>{
-      if(d.data)setDrivers(d.data);
-      if(cl.data)setClients(cl.data);
-      if(pr.data)setProducts(pr.data);
+      if(d.data) setDrivers(d.data);
+      if(cl.data) setClients(cl.data);
+      if(pr.data) setProducts(pr.data);
       setLoading(false);
     });
   },[]);
 
-  // Load stops for driver and subscribe to realtime
-  useEffect(()=>{
-    if(!driver)return;
-    loadStops();
-    const ch=sb.channel("chofer-"+driver.id)
-      .on("postgres_changes",{event:"*",schema:"public",table:"stops",filter:`driver_id=eq.${driver.id}`},()=>loadStops())
-      .subscribe();
-    return()=>sb.removeChannel(ch);
-  },[driver]);
-
-  async function loadStops(){
-    if(!driver)return;
-    const{data}=await sb.from("stops").select("*").eq("driver_id",driver.id).eq("work_date",todayStr()).order("route_order");
-    if(data)setMyStops(data);
+  async function loadStops(driverId){
+    const{data}=await dbGet("stops",{driver_id:driverId,work_date:todayStr()},"route_order");
+    if(data) setMyStops(data);
+    return data||[];
   }
 
-  function selectDriver(dr){
+  async function selectDriver(dr){
     setDriver(dr);
-    // stops will load via useEffect
+    setSyncing(true);
+    const stops = await loadStops(dr.id);
+    setSyncing(false);
+    const first = stops.findIndex(s=>s.status!=="entregado");
+    setCurIdx(first>=0?first:0);
+    setScreen(stops.length>0?"route":"route");
   }
 
+  // Polling every 30s when in route
   useEffect(()=>{
-    if(!driver)return;
-    // Once stops load, go to route screen
-    const pending=myStops.findIndex(s=>s.status!=="entregado");
-    if(myStops.length>0){
-      setCurIdx(pending>=0?pending:0);
-      setScreen("route");
-    } else if(driver&&screen==="login"){
-      setScreen("route"); // will show empty state
-    }
-  },[myStops]);
+    if(!driver||screen==="login")return;
+    const iv=setInterval(async()=>{
+      const{data}=await dbGet("stops",{driver_id:driver.id,work_date:todayStr()},"route_order");
+      if(data) setMyStops(data);
+    },30000);
+    return()=>clearInterval(iv);
+  },[driver,screen]);
 
   async function confirmDelivery(sig){
     const stop=myStops[curIdx];
-    await sb.from("stops").update({
-      status:"entregado",
-      signature:sig,
-      delivery_note:note,
-      delivered_at:new Date().toISOString()
-    }).eq("id",stop.id);
-    setShowSig(false);
-    setNote("");
+    await dbUpdate("stops",{status:"entregado",signature:sig,delivery_note:note,delivered_at:new Date().toISOString()},"id",stop.id);
+    const updated=myStops.map((s,i)=>i===curIdx?{...s,status:"entregado"}:s);
+    setMyStops(updated);
+    setShowSig(false); setNote("");
     t_("✓ Entrega confirmada");
-    await loadStops();
-  }
-
-  // After stops reload, advance to next
-  const prevStopsRef=useRef([]);
-  useEffect(()=>{
-    const prev=prevStopsRef.current;
-    if(prev.length>0&&myStops.length>0&&screen==="stop"){
-      const nextIdx=myStops.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");
-      if(nextIdx>=0){setTimeout(()=>setCurIdx(nextIdx),600);}
+    setTimeout(()=>{
+      const next=updated.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");
+      if(next>=0){setCurIdx(next);setScreen("stop");}
       else{
-        const anyPending=myStops.findIndex(s=>s.status!=="entregado");
-        anyPending>=0?setTimeout(()=>setCurIdx(anyPending),600):setTimeout(()=>setScreen("done"),600);
+        const any=updated.findIndex(s=>s.status!=="entregado");
+        any>=0?setCurIdx(any)||setScreen("stop"):setScreen("done");
       }
-    }
-    prevStopsRef.current=myStops;
-  },[myStops]);
+    },900);
+  }
 
   const cur=myStops[curIdx];
   const pending=myStops.filter(s=>s.status!=="entregado").length;
   const delivered=myStops.filter(s=>s.status==="entregado").length;
 
-  /* ── LOADING ──────────────────────────────────────────────────────────── */
+  /* LOGIN */
   if(loading) return(
-    <div style={{height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#fff"}}>
+    <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
       <Spinner/>
       <div style={{fontSize:13,color:"#94a3b8"}}>Conectando…</div>
     </div>
   );
 
-  /* ── LOGIN ────────────────────────────────────────────────────────────── */
   if(screen==="login") return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column"}}>
-      <div style={{padding:"32px 24px 24px",borderBottom:"1px solid #f1f5f9"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-          <div style={{width:36,height:36,borderRadius:10,background:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🚛</div>
+      <div style={{padding:"36px 24px 24px",borderBottom:"1px solid #f1f5f9"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+          <img src="icon-192.png" style={{width:48,height:48,borderRadius:12}} alt="CachoFer"/>
           <div>
-            <div style={{fontSize:20,fontWeight:800,letterSpacing:-.5}}>CachoFer</div>
-            <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5}}>APP DEL CHOFER</div>
+            <div style={{fontSize:22,fontWeight:800,letterSpacing:-.5}}>CachoFer</div>
+            <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5,textTransform:"uppercase"}}>App del Chofer</div>
           </div>
         </div>
         <div style={{fontSize:14,color:"#64748b"}}>Seleccioná tu nombre para ver tu ruta de hoy</div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
-        {drivers.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40,lineHeight:1.6}}>Sin choferes registrados.<br/>Pedile al administrador que cree tu usuario.</div>}
-        {drivers.map(dr=>(
+        {syncing&&<div style={{display:"flex",justifyContent:"center",padding:32}}><Spinner/></div>}
+        {!syncing&&drivers.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40,lineHeight:1.7}}>Sin choferes registrados.<br/>Pedile al administrador que cree tu usuario.</div>}
+        {!syncing&&drivers.map(dr=>(
           <button key={dr.id} onClick={()=>selectDriver(dr)}
-            style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left",transition:"all .15s",animation:"fadeUp .2s ease"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor="#e2e8f0";e.currentTarget.style.background="#f8fafc";}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor="#f1f5f9";e.currentTarget.style.background="#fff";}}>
-            <div style={{width:48,height:48,borderRadius:13,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
+            style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left",transition:"all .15s",animation:"fadeUp .2s ease"}}>
+            <div style={{width:52,height:52,borderRadius:14,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:17,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
             <div style={{flex:1}}>
-              <div style={{fontSize:15,fontWeight:600,marginBottom:3}}>{dr.name}</div>
+              <div style={{fontSize:16,fontWeight:600,marginBottom:3}}>{dr.name}</div>
               <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#94a3b8"}}>
                 <span style={{width:7,height:7,borderRadius:"50%",background:dr.status==="en_ruta"?"#10b981":"#cbd5e1",display:"inline-block"}}/>
                 {dr.status==="en_ruta"?"En ruta":"Disponible"}
                 {dr.phone&&<><span style={{color:"#e2e8f0"}}>·</span><span>{dr.phone}</span></>}
               </div>
             </div>
-            <span style={{fontSize:18,color:"#e2e8f0"}}>→</span>
+            <span style={{fontSize:20,color:"#e2e8f0"}}>→</span>
           </button>
         ))}
       </div>
-      <div style={{padding:"12px 20px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
-        <div style={{fontSize:11,color:"#cbd5e1"}}>Datos sincronizados en tiempo real con la central</div>
+      <div style={{padding:"10px 20px 24px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
+        <div style={{fontSize:11,color:"#cbd5e1"}}>Sincronizado en tiempo real · CachoFer v5</div>
       </div>
     </div>
   );
 
-  /* ── DONE ─────────────────────────────────────────────────────────────── */
+  /* DONE */
   if(screen==="done") return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24}}>
-      <div style={{fontSize:64}}>🎉</div>
+      <div style={{fontSize:72}}>🎉</div>
       <div style={{fontSize:26,fontWeight:800,color:"#10b981",letterSpacing:-.5}}>¡Ruta completada!</div>
       <div style={{fontSize:14,color:"#64748b",textAlign:"center"}}>Todas las entregas del día fueron realizadas</div>
-      <div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:14,padding:"16px 40px",textAlign:"center",marginTop:8}}>
-        <div style={{fontSize:40,fontWeight:800,color:"#10b981"}}>{myStops.length}</div>
-        <div style={{fontSize:11,color:"#64748b",letterSpacing:1,textTransform:"uppercase",marginTop:2}}>Entregas realizadas</div>
+      <div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:14,padding:"18px 44px",textAlign:"center"}}>
+        <div style={{fontSize:44,fontWeight:800,color:"#10b981"}}>{myStops.length}</div>
+        <div style={{fontSize:11,color:"#64748b",letterSpacing:1,textTransform:"uppercase"}}>Entregas realizadas</div>
       </div>
-      <button onClick={()=>{setScreen("login");setDriver(null);setMyStops([]);}} style={{marginTop:16,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
+      <button onClick={()=>{setScreen("login");setDriver(null);setMyStops([]);}} style={{marginTop:12,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
     </div>
   );
 
-  /* ── ROUTE LIST ───────────────────────────────────────────────────────── */
+  /* ROUTE LIST */
   if(screen==="route") return(
     <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
       <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-        <div style={{width:38,height:38,borderRadius:10,background:driver.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
+        <div style={{width:40,height:40,borderRadius:11,background:driver.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
         <div>
           <div style={{fontSize:14,fontWeight:700}}>{driver.name}</div>
           <div style={{fontSize:11,color:"#94a3b8"}}>Ruta de hoy · {new Date().toLocaleDateString("es-AR")}</div>
         </div>
         <div style={{marginLeft:"auto",textAlign:"right"}}>
-          <div style={{fontSize:22,fontWeight:800,color:pending>0?"#f97316":"#10b981"}}>{pending}</div>
+          <div style={{fontSize:24,fontWeight:800,color:pending>0?"#f97316":"#10b981"}}>{pending}</div>
           <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase"}}>pendientes</div>
         </div>
       </div>
-
       <div style={{height:3,background:"#f1f5f9",flexShrink:0}}>
         <div style={{height:"100%",background:"#10b981",width:`${myStops.length>0?(delivered/myStops.length)*100:0}%`,transition:"width .6s ease"}}/>
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:1,background:"#f1f5f9",flexShrink:0}}>
         {[[myStops.length,"TOTAL"],[delivered,"ENTREGADAS"],[pending,"PENDIENTES"]].map(([v,l])=>(
           <div key={l} style={{background:"#fff",padding:"10px 0",textAlign:"center"}}>
-            <div style={{fontSize:20,fontWeight:700}}>{v}</div>
+            <div style={{fontSize:22,fontWeight:700}}>{v}</div>
             <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1}}>{l}</div>
           </div>
         ))}
       </div>
-
-      <div style={{flex:1,overflowY:"auto",padding:"12px 14px 90px"}}>
+      <div style={{flex:1,overflowY:"auto",padding:"12px 14px 100px"}}>
         <div style={{fontSize:10,color:"#94a3b8",letterSpacing:2,marginBottom:10,textTransform:"uppercase"}}>Paradas del día</div>
-        {myStops.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:48,lineHeight:1.8}}>Sin paradas asignadas para hoy.<br/>Contactá al administrador.</div>}
+        {myStops.length===0&&(
+          <div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:56,lineHeight:1.8}}>
+            <div style={{fontSize:40,marginBottom:12}}>📭</div>
+            Sin paradas asignadas para hoy.<br/>Contactá al administrador.
+          </div>
+        )}
         {myStops.map((s,i)=>{
-          const done=s.status==="entregado";
-          const isCur=i===curIdx&&!done;
+          const done=s.status==="entregado", isCur=i===curIdx&&!done;
           const c=clients.find(x=>x.id===s.client_id)||{};
           return(
             <div key={s.id} onClick={()=>{if(!done){setCurIdx(i);setScreen("stop");}}}
-              style={{background:"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#e8f5e9":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:done?"default":"pointer",opacity:done?.55:1,display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?PC[s.priority]:"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
+              style={{background:"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#dcfce7":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:done?"default":"pointer",opacity:done?.55:1,display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?PC[s.priority]:"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
                 {done?"✓":i+1}
               </div>
               <div style={{flex:1,minWidth:0}}>
@@ -312,10 +277,9 @@ function App(){
           );
         })}
       </div>
-
       {pending>0&&cur&&(
-        <div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 28px)",maxWidth:420}}>
-          <button onClick={()=>setScreen("stop")} style={{width:"100%",background:"#111",border:"none",borderRadius:14,padding:17,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,0.2)"}}>
+        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 28px",background:"linear-gradient(to top,#f8f9fa 65%,transparent)"}}>
+          <button onClick={()=>setScreen("stop")} style={{width:"100%",background:"#111",border:"none",borderRadius:14,padding:18,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,0.2)"}}>
             → Ir a entrega #{curIdx+1}
           </button>
         </div>
@@ -323,100 +287,89 @@ function App(){
     </div>
   );
 
-  /* ── STOP DETAIL ──────────────────────────────────────────────────────── */
+  /* STOP DETAIL */
   if(screen==="stop"&&cur){
     const s=cur;
     const c=clients.find(x=>x.id===s.client_id)||{};
     const mapsUrl=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(c.address||"")}&travelmode=driving`;
-
     return(
       <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa",overflowY:"auto"}}>
         <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-          <button onClick={()=>setScreen("route")} style={{background:"none",border:"none",fontSize:20,color:"#64748b",cursor:"pointer",padding:"2px 6px",borderRadius:6}}>←</button>
+          <button onClick={()=>setScreen("route")} style={{background:"none",border:"none",fontSize:22,color:"#64748b",cursor:"pointer",padding:"2px 6px",borderRadius:6}}>←</button>
           <div style={{flex:1}}>
             <div style={{fontSize:13,fontWeight:600}}>Parada {curIdx+1} / {myStops.length}</div>
             <div style={{fontSize:11,color:"#94a3b8"}}>{pending-1} restantes</div>
           </div>
           <div style={{background:PBG[s.priority],border:`1px solid ${PC[s.priority]}30`,borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:600,color:PC[s.priority],textTransform:"capitalize"}}>{s.priority} · ⏰ {s.time_limit}</div>
         </div>
-
-        <div style={{padding:"14px 14px 110px"}}>
-
+        <div style={{padding:"14px 14px 120px"}}>
           {/* Dirección */}
           <div style={{background:"#fff",borderRadius:14,padding:"16px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
             <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Dirección</div>
-            <div style={{fontSize:17,fontWeight:700,lineHeight:1.3,marginBottom:14}}>{c.address||"Sin dirección"}</div>
+            <div style={{fontSize:18,fontWeight:700,lineHeight:1.3,marginBottom:16}}>{c.address||"Sin dirección"}</div>
             <a href={mapsUrl} target="_blank" rel="noreferrer"
-              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px",borderRadius:10,background:"#1d4ed8",color:"#fff",textDecoration:"none",fontSize:14,fontWeight:600}}>
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:10,background:"#1d4ed8",color:"#fff",textDecoration:"none",fontSize:14,fontWeight:600}}>
               🗺️ Abrir navegación en Maps
             </a>
           </div>
-
           {/* Destinatario */}
           <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
             <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Destinatario</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div>
-                <div style={{fontSize:16,fontWeight:700}}>{c.name||"—"}</div>
+                <div style={{fontSize:17,fontWeight:700}}>{c.name||"—"}</div>
                 <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{c.phone||"Sin teléfono"}</div>
               </div>
-              {c.phone&&<a href={`tel:${c.phone}`} style={{width:42,height:42,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,textDecoration:"none"}}>📞</a>}
+              {c.phone&&<a href={`tel:${c.phone}`} style={{width:44,height:44,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,textDecoration:"none"}}>📞</a>}
             </div>
             {c.notes&&<div style={{marginTop:10,padding:"8px 10px",background:"#f8fafc",borderRadius:8,fontSize:12,color:"#64748b"}}>📝 {c.notes}</div>}
           </div>
-
           {/* Paquetes */}
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Paquetes</div>
-            {(s.products||[]).map(item=>{
-              const pr=products.find(x=>x.id===item.productId);
-              return pr?(
-                <div key={item.productId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f8f9fa"}}>
-                  <div style={{width:32,height:32,borderRadius:8,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📦</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:600}}>{pr.name}</div>
-                    <div style={{fontSize:11,color:"#94a3b8"}}>{prp?.description}</div>
+          {(s.products||[]).length>0&&(
+            <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
+              <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Paquetes</div>
+              {(s.products||[]).map(item=>{
+                const pr=products.find(x=>x.id===item.productId);
+                return pr?(
+                  <div key={item.productId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f8f9fa"}}>
+                    <div style={{width:32,height:32,borderRadius:8,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📦</div>
+                    <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{pr.name}</div><div style={{fontSize:11,color:"#94a3b8"}}>{pr.description}</div></div>
+                    <div style={{fontSize:16,fontWeight:700,color:"#6366f1"}}>×{item.qty}</div>
                   </div>
-                  <div style={{fontSize:16,fontWeight:700,color:"#6366f1"}}>×{item.qty}</div>
-                </div>
-              ):null;
-            })}
-          </div>
-
+                ):null;
+              })}
+            </div>
+          )}
           {/* Progreso */}
           <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
             <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Progreso</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
               {myStops.map((ms,i)=>(
                 <div key={ms.id} onClick={()=>{if(ms.status!=="entregado"){setCurIdx(i);}}}
-                  style={{width:30,height:30,borderRadius:"50%",background:ms.status==="entregado"?"#10b981":i===curIdx?PC[s.priority]:"#f1f5f9",color:ms.status==="entregado"||i===curIdx?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,cursor:ms.status!=="entregado"?"pointer":"default"}}>
+                  style={{width:32,height:32,borderRadius:"50%",background:ms.status==="entregado"?"#10b981":i===curIdx?PC[s.priority]:"#f1f5f9",color:ms.status==="entregado"||i===curIdx?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,cursor:ms.status!=="entregado"?"pointer":"default"}}>
                   {ms.status==="entregado"?"✓":i+1}
                 </div>
               ))}
             </div>
           </div>
-
-          {/* Observación */}
+          {/* Nota */}
           <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
             <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Observación (opcional)</div>
             <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Ej: Dejé con el portero, nadie en casa…"
-              style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:70,color:"#111"}}/>
+              style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:72,color:"#111"}}/>
           </div>
         </div>
-
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 20px",background:"linear-gradient(to top,#f8f9fa 70%,transparent)"}}>
+        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 28px",background:"linear-gradient(to top,#f8f9fa 65%,transparent)"}}>
           <button onClick={()=>setShowSig(true)}
-            style={{width:"100%",background:"#10b981",border:"none",borderRadius:14,padding:17,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(16,185,129,0.3)"}}>
+            style={{width:"100%",background:"#10b981",border:"none",borderRadius:14,padding:18,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(16,185,129,0.3)"}}>
             ✓ Confirmar entrega
           </button>
         </div>
-
         {showSig&&<SigPad onCapture={confirmDelivery} onCancel={()=>setShowSig(false)}/>}
-        {toast&&<div style={{position:"fixed",top:70,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,boxShadow:"0 4px 18px rgba(0,0,0,0.15)",zIndex:400,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
+        {toast&&<div style={{position:"fixed",top:72,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:14,fontWeight:600,zIndex:400,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
       </div>
     );
   }
-
   return null;
 }
 
