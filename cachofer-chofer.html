@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -226,29 +227,39 @@ function App(){
   const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
 
   useEffect(()=>{
-    Promise.all([
-      dbGet("drivers",{},"name"),
-      dbGet("clients"),
-      dbGet("products",{},"name"),
-    ]).then(([d,cl,pr])=>{
-      if(d.data)setDrivers(d.data);
-      if(cl.data)setClients(cl.data);
-      if(pr.data)setProducts(pr.data);
-      // Cargar depot desde Supabase
+    async function loadAll(){
       try{
-        const{data}=await dbGet("config",{key:"depot"});
+        const [d,cl,pr] = await Promise.all([
+          dbGet("drivers",{},"name"),
+          dbGet("clients"),
+          dbGet("products",{},"name"),
+        ]);
+        console.log("drivers:",d.data?.length, d.error);
+        console.log("clients:",cl.data?.length, cl.error);
+        console.log("products:",pr.data?.length, pr.error);
+        if(d.data)setDrivers(d.data);
+        if(cl.data)setClients(cl.data);
+        if(pr.data)setProducts(pr.data);
+      }catch(e){
+        console.error("Error cargando datos:",e);
+      }
+      // Depot — con fallback a localStorage si config no existe
+      try{
+        const{data,error}=await dbGet("config",{key:"depot"});
+        console.log("config depot:",data,error);
         if(data&&data[0]?.value&&data[0].value.address){
           setDepot(data[0].value);
         } else {
-          // Fallback a localStorage
           const local=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");
-          if(local.address)setDepot(local);
+          if(local?.address)setDepot(local);
         }
-      }catch{
-        try{const dep=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");if(dep.address)setDepot(dep);}catch{}
+      }catch(e){
+        console.log("Config no disponible, usando localStorage:",e);
+        try{const dep=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");if(dep?.address)setDepot(dep);}catch{}
       }
       setLoading(false);
-    });
+    }
+    loadAll();
   },[]);
 
   async function loadStops(driverId){
