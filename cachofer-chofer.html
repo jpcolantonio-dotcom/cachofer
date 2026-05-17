@@ -32,14 +32,31 @@ const { useState, useEffect, useRef } = React;
 const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
 
-const H = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY, "Content-Type": "application/json", "Prefer": "return=representation" };
-async function dbGet(table,filters={},orderBy=null,orderDesc=false){ let url=SUPA_URL+"/rest/v1/"+table+"?select=*"; Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);}); if(orderBy)url+="&order="+orderBy+(orderDesc?".desc":".asc"); const r=await fetch(url,{headers:H}); const d=await r.json(); return{data:Array.isArray(d)?d:[],error:r.ok?null:d}; }
-async function dbUpdate(table,data,col,val){ const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:H,body:JSON.stringify(data)}); return{error:r.ok?null:await r.json()}; }
+const HG = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY };
+const HW = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY, "Content-Type": "application/json", "Prefer": "return=representation" };
+async function dbGet(table,filters={},orderBy=null){
+  let url=SUPA_URL+"/rest/v1/"+table+"?select=*";
+  Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);});
+  if(orderBy)url+="&order="+orderBy+".asc";
+  const r=await fetch(url,{method:"GET",headers:HG});
+  const d=await r.json();
+  if(!r.ok)console.error("dbGet error",table,d);
+  return{data:Array.isArray(d)?d:[],error:r.ok?null:d};
+}
+async function dbUpdate(table,data,col,val){
+  const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});
+  const d=await r.json();
+  if(!r.ok)console.error("dbUpdate error",table,d);
+  return{data:d,error:r.ok?null:d};
+}
 const sb = {
   from:(t)=>({
-    select:(c="*")=>({
-      order:(col,o={})=>dbGet(t,{},col,o.ascending===false),
-      eq:(col,val)=>({order:(c2,o={})=>dbGet(t,{[col]:val},c2,o.ascending===false), then:(fn)=>dbGet(t,{[col]:val}).then(fn)}),
+    select:()=>({
+      order:(col)=>dbGet(t,{},col),
+      eq:(col,val)=>({
+        order:(c)=>dbGet(t,{[col]:val},c),
+        then:(fn)=>dbGet(t,{[col]:val}).then(fn),
+      }),
       then:(fn)=>dbGet(t,{}).then(fn),
     }),
     update:(d)=>({eq:(col,val)=>dbUpdate(t,d,col,val)}),
