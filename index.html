@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -166,7 +167,7 @@ function StopModal({initial,clients,products,workDate,onClose,onSave}){
       <Field label="Notas"><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Timbre roto, dejar con portero…" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 12px",fontSize:14,outline:"none",resize:"none",height:66}}/></Field>
       <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
         <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn onClick={()=>{if(!clientId||items.length===0)return;onSave({id:initial?.id||"ST"+Date.now(),client_id:clientId,products:items,time_limit:timeLimit,priority,notes,status:initial?.status||"pendiente",work_date:initial?.work_date||workDate,driver_id:initial?.driver_id||null,route_order:initial?.route_order||0});onClose();}} variant="primary" disabled={!clientId||items.length===0}>{initial?.id?"Guardar":"Agregar parada"}</Btn>
+        <Btn onClick={()=>{if(!clientId)return;onSave({id:initial?.id||"ST"+Date.now(),client_id:clientId,products:items,time_limit:timeLimit,priority,notes,status:initial?.status||"pendiente",work_date:initial?.work_date||workDate,driver_id:initial?.driver_id||null,route_order:initial?.route_order||0});onClose();}} variant="primary" disabled={!clientId}>{initial?.id?"Guardar":"Agregar parada"}</Btn>
       </div>
     </Modal>
   );
