@@ -8,86 +8,178 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="CachoFer">
+<meta name="apple-mobile-web-app-title" content="CA-Chofer">
 <meta name="theme-color" content="#111111">
 <link rel="apple-touch-icon" href="icon-512.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;overflow:hidden}
+html,body,#root{height:100%;overflow:hidden}
 body{font-family:'Inter',sans-serif;background:#f8f9fa;color:#111;-webkit-font-smoothing:antialiased}
 button{font-family:'Inter',sans-serif;cursor:pointer}
 input,textarea{font-family:'Inter',sans-serif}
 ::-webkit-scrollbar{width:3px}
 ::-webkit-scrollbar-thumb{background:#e2e8f0;border-radius:4px}
-textarea::placeholder,input::placeholder{color:#cbd5e1}
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.leaflet-container{font-family:'Inter',sans-serif}
 </style>
 </head>
 <body>
-<div id="root" style="height:100%"></div>
+<div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
+/* ── SUPABASE ──────────────────────────────────────────────────────────────*/
 const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
+const HG = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY};
+const HW = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
 
-const HG = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY };
-const HW = { "apikey": SUPA_KEY, "Authorization": "Bearer "+SUPA_KEY, "Content-Type": "application/json", "Prefer": "return=representation" };
-
-async function dbGet(table, filters={}, orderBy=null){
-  let url = SUPA_URL+"/rest/v1/"+table+"?select=*";
-  Object.entries(filters).forEach(([k,v])=>{ url+="&"+k+"=eq."+encodeURIComponent(v); });
+async function dbGet(table,filters={},orderBy=null){
+  let url=SUPA_URL+"/rest/v1/"+table+"?select=*";
+  Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);});
   if(orderBy) url+="&order="+orderBy+".asc";
-  const r = await fetch(url, {method:"GET", headers:HG});
-  const d = await r.json();
-  if(!r.ok) console.error("dbGet error", table, d);
-  return { data: Array.isArray(d)?d:[], error: r.ok?null:d };
+  const r=await fetch(url,{method:"GET",headers:HG});
+  const d=await r.json();
+  return{data:Array.isArray(d)?d:[],error:r.ok?null:d};
 }
-async function dbUpdate(table, data, col, val){
-  const r = await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val), {method:"PATCH", headers:HW, body:JSON.stringify(data)});
-  const d = await r.json();
-  return { data:d, error:r.ok?null:d };
+async function dbUpdate(table,data,col,val){
+  const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});
+  const d=await r.json();
+  return{data:d,error:r.ok?null:d};
 }
 
-const todayStr = () => new Date().toISOString().slice(0,10);
-const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
-const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const PC={urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
+const PBG={urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
 
-function PTag({p}){ return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>; }
-function Spinner(){ return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>; }
+function Spinner(){return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>;}
+function PTag({p}){return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;}
 
+/* ── SIGNATURE PAD ─────────────────────────────────────────────────────────*/
 function SigPad({onCapture,onCancel}){
-  const ref=useRef(null); const drawing=useRef(false); const last=useRef(null);
+  const ref=useRef(null);const drawing=useRef(false);const last=useRef(null);
   function pos(e,c){const r=c.getBoundingClientRect();const src=e.touches?e.touches[0]:e;return{x:src.clientX-r.left,y:src.clientY-r.top};}
   function start(e){e.preventDefault();drawing.current=true;last.current=pos(e,ref.current);}
   function move(e){e.preventDefault();if(!drawing.current)return;const c=ref.current,ctx=c.getContext("2d"),p=pos(e,c);ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();last.current=p;}
   function end(e){e.preventDefault();drawing.current=false;}
   function clear(){ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height);}
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
-      <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:380,animation:"fadeUp .25s ease"}}>
-        <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>Firma del receptor</div>
-        <div style={{fontSize:12,color:"#94a3b8",marginBottom:14}}>Firmá en el recuadro para confirmar la entrega</div>
-        <canvas ref={ref} width={340} height={160} style={{border:"1.5px solid #e2e8f0",borderRadius:10,touchAction:"none",display:"block",width:"100%",background:"#fafafa"}}
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"flex-end",justifyContent:"center",backdropFilter:"blur(3px)"}}>
+      <div style={{background:"#fff",borderRadius:"16px 16px 0 0",padding:20,width:"100%",maxWidth:480,animation:"fadeUp .25s ease",paddingBottom:32}}>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>Firma del receptor</div>
+        <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>Firmá para confirmar la entrega</div>
+        <canvas ref={ref} width={440} height={140} style={{border:"1.5px solid #e2e8f0",borderRadius:10,touchAction:"none",display:"block",width:"100%",background:"#fafafa"}}
           onMouseDown={start} onMouseMove={move} onMouseUp={end}
           onTouchStart={start} onTouchMove={move} onTouchEnd={end}/>
-        <div style={{display:"flex",gap:8,marginTop:14}}>
-          <button onClick={clear} style={{flex:1,padding:"10px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Limpiar</button>
-          <button onClick={onCancel} style={{flex:1,padding:"10px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Cancelar</button>
-          <button onClick={()=>onCapture(ref.current.toDataURL())} style={{flex:2,padding:"10px",borderRadius:9,border:"none",background:"#111",color:"#fff",fontSize:13,fontWeight:600}}>✓ Confirmar</button>
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          <button onClick={clear} style={{flex:1,padding:"11px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Limpiar</button>
+          <button onClick={onCancel} style={{flex:1,padding:"11px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Cancelar</button>
+          <button onClick={()=>onCapture(ref.current.toDataURL())} style={{flex:2,padding:"11px",borderRadius:10,border:"none",background:"#111",color:"#fff",fontSize:13,fontWeight:600}}>✓ Confirmar</button>
         </div>
       </div>
     </div>
   );
 }
 
+/* ── ROUTE MAP COMPONENT ───────────────────────────────────────────────────*/
+function RouteMap({stops,clients,curIdx,driver,depot,onMarkerClick}){
+  const ref=useRef(null);
+  const mapRef=useRef(null);
+  const markersRef=useRef([]);
+  const polyRef=useRef(null);
+  const driverMarkerRef=useRef(null);
+
+  useEffect(()=>{
+    if(!ref.current) return;
+    if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+    const map=L.map(ref.current,{zoomControl:false,attributionControl:false}).setView([-34.61,-58.38],13);
+    mapRef.current=map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+    L.control.zoom({position:"bottomright"}).addTo(map);
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
+  },[]);
+
+  // Update markers + route when stops/curIdx changes
+  useEffect(()=>{
+    const map=mapRef.current;
+    if(!map) return;
+
+    // Clear old markers
+    markersRef.current.forEach(m=>map.removeLayer(m));
+    markersRef.current=[];
+    if(polyRef.current){map.removeLayer(polyRef.current);polyRef.current=null;}
+
+    const pts=[];
+
+    // Depot marker
+    if(depot?.lat&&depot?.lng){
+      pts.push([depot.lat,depot.lng]);
+      const icon=L.divIcon({className:"",html:`<div style="width:34px;height:34px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">🏭</div>`,iconSize:[34,34],iconAnchor:[17,34]});
+      const m=L.marker([depot.lat,depot.lng],{icon}).addTo(map);
+      markersRef.current.push(m);
+    }
+
+    // Stop markers
+    stops.forEach((s,i)=>{
+      const c=clients.find(x=>x.id===s.client_id);
+      if(!c?.lat||!c?.lng) return;
+      pts.push([c.lat,c.lng]);
+      const done=s.status==="entregado";
+      const isCur=i===curIdx;
+      const color=done?"#10b981":isCur?(PC[s.priority]||"#6366f1"):"#94a3b8";
+      const size=isCur?38:28;
+      const border=isCur?"3px solid #fff":"2px solid #fff";
+      const shadow=isCur?"0 3px 12px rgba(0,0,0,.4)":"0 2px 6px rgba(0,0,0,.25)";
+      const label=done?"✓":String(i+1);
+      const icon=L.divIcon({className:"",html:`<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:${isCur?14:11}px;font-weight:700;border:${border};box-shadow:${shadow};cursor:pointer;transition:all .2s;font-family:Inter,sans-serif">${label}</div>`,iconSize:[size,size],iconAnchor:[size/2,size/2]});
+      const m=L.marker([c.lat,c.lng],{icon}).addTo(map);
+      m.on("click",()=>onMarkerClick&&onMarkerClick(i));
+      m.bindPopup(`<div style="font-family:Inter,sans-serif;min-width:140px"><b>${c.name}</b><br><span style="font-size:11px;color:#64748b">${c.address}</span><br><span style="color:${color};font-size:11px;font-weight:600">⏰ ${s.time_limit} · ${s.priority}${done?" · ✓ Entregado":""}</span></div>`);
+      if(isCur) m.openPopup();
+      markersRef.current.push(m);
+    });
+
+    // Draw route polyline
+    if(pts.length>1){
+      const color=driver?.color||"#6366f1";
+      polyRef.current=L.polyline(pts,{color,weight:3,dashArray:"7,5",opacity:.7}).addTo(map);
+    }
+
+    // Fit to current stop if exists
+    const cur=stops[curIdx];
+    const curClient=cur?clients.find(x=>x.id===cur.client_id):null;
+    if(curClient?.lat&&curClient?.lng){
+      map.setView([curClient.lat,curClient.lng],15,{animate:true});
+    } else if(pts.length>0){
+      map.fitBounds(pts,{padding:[40,40]});
+    }
+
+    setTimeout(()=>map.invalidateSize(),100);
+  },[stops,clients,curIdx,depot]);
+
+  // Update driver live position
+  useEffect(()=>{
+    const map=mapRef.current;
+    if(!map||!driver?.current_lat||!driver?.current_lng) return;
+    if(driverMarkerRef.current){map.removeLayer(driverMarkerRef.current);driverMarkerRef.current=null;}
+    const color=driver.color||"#6366f1";
+    const icon=L.divIcon({className:"",html:`<div style="width:38px;height:38px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:18px">🚛</div>`,iconSize:[38,38],iconAnchor:[19,19]});
+    driverMarkerRef.current=L.marker([driver.current_lat,driver.current_lng],{icon,zIndexOffset:999}).addTo(map);
+  },[driver?.current_lat,driver?.current_lng]);
+
+  return <div ref={ref} style={{width:"100%",height:"100%"}}/>;
+}
+
+/* ── MAIN APP ──────────────────────────────────────────────────────────────*/
 function App(){
   const [screen,setScreen]     = useState("login");
   const [loading,setLoading]   = useState(true);
@@ -96,11 +188,13 @@ function App(){
   const [myStops,setMyStops]   = useState([]);
   const [clients,setClients]   = useState([]);
   const [products,setProducts] = useState([]);
+  const [depot,setDepot]       = useState(null);
   const [curIdx,setCurIdx]     = useState(0);
   const [showSig,setShowSig]   = useState(false);
+  const [showPanel,setShowPanel] = useState(true); // panel inferior abierto/cerrado
   const [note,setNote]         = useState("");
   const [toast,setToast]       = useState(null);
-  const [syncing,setSyncing]   = useState(false);
+  const [confirming,setConfirming] = useState(false);
 
   const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),2800);};
 
@@ -113,6 +207,8 @@ function App(){
       if(d.data) setDrivers(d.data);
       if(cl.data) setClients(cl.data);
       if(pr.data) setProducts(pr.data);
+      // Load depot from localStorage
+      try{ const dep=JSON.parse(localStorage.getItem("cachofer_depot")); if(dep) setDepot(dep); }catch{}
       setLoading(false);
     });
   },[]);
@@ -125,99 +221,88 @@ function App(){
 
   async function selectDriver(dr){
     setDriver(dr);
-    setSyncing(true);
-    const stops = await loadStops(dr.id);
-    setSyncing(false);
-    const first = stops.findIndex(s=>s.status!=="entregado");
+    const stops=await loadStops(dr.id);
+    const first=stops.findIndex(s=>s.status!=="entregado");
     setCurIdx(first>=0?first:0);
-    setScreen(stops.length>0?"route":"route");
+    setScreen("map");
   }
 
-  // GPS: enviar ubicación cada 15 segundos cuando está en ruta
+  // GPS tracking
   useEffect(()=>{
-    if(!driver||screen==="login"||screen==="done") return;
+    if(!driver||screen==="login") return;
     if(!navigator.geolocation) return;
-
-    let watchId = null;
-    let lastSend = 0;
-
-    watchId = navigator.geolocation.watchPosition(
-      async (pos)=>{
-        const now = Date.now();
-        if(now - lastSend < 15000) return; // max cada 15s
-        lastSend = now;
-        const {latitude:lat, longitude:lng} = pos.coords;
-        await dbUpdate("drivers",{
-          current_lat: lat,
-          current_lng: lng,
-          location_updated_at: new Date().toISOString(),
-          status: "en_ruta"
-        },"id", driver.id);
-      },
-      (err)=>console.log("GPS error:",err.message),
-      {enableHighAccuracy:true, maximumAge:10000, timeout:10000}
-    );
-
-    return()=>{ if(watchId) navigator.geolocation.clearWatch(watchId); };
+    let lastSend=0;
+    const id=navigator.geolocation.watchPosition(async pos=>{
+      const now=Date.now();
+      if(now-lastSend<15000) return;
+      lastSend=now;
+      const{latitude:lat,longitude:lng}=pos.coords;
+      await dbUpdate("drivers",{current_lat:lat,current_lng:lng,location_updated_at:new Date().toISOString(),status:"en_ruta"},"id",driver.id);
+      setDriver(p=>({...p,current_lat:lat,current_lng:lng}));
+    },err=>{},{ enableHighAccuracy:true,maximumAge:10000,timeout:15000});
+    return()=>navigator.geolocation.clearWatch(id);
   },[driver,screen]);
 
-  // Polling every 30s when in route
+  // Poll stops every 30s
   useEffect(()=>{
-    if(!driver||screen==="login")return;
-    const iv=setInterval(async()=>{
-      const{data}=await dbGet("stops",{driver_id:driver.id,work_date:todayStr()},"route_order");
-      if(data) setMyStops(data);
-    },30000);
+    if(!driver||screen==="login") return;
+    const iv=setInterval(()=>loadStops(driver.id),30000);
     return()=>clearInterval(iv);
   },[driver,screen]);
 
   async function confirmDelivery(sig){
     const stop=myStops[curIdx];
-    await dbUpdate("stops",{status:"entregado",signature:sig,delivery_note:note,delivered_at:new Date().toISOString()},"id",stop.id);
+    setConfirming(true);
+    await dbUpdate("stops",{status:"entregado",signature:sig||null,delivery_note:note,delivered_at:new Date().toISOString()},"id",stop.id);
     const updated=myStops.map((s,i)=>i===curIdx?{...s,status:"entregado"}:s);
     setMyStops(updated);
-    setShowSig(false); setNote("");
+    setShowSig(false);
+    setNote("");
+    setConfirming(false);
     t_("✓ Entrega confirmada");
+
+    // Move to next pending
     setTimeout(()=>{
       const next=updated.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");
-      if(next>=0){setCurIdx(next);setScreen("stop");}
+      if(next>=0){ setCurIdx(next); }
       else{
         const any=updated.findIndex(s=>s.status!=="entregado");
-        any>=0?setCurIdx(any)||setScreen("stop"):setScreen("done");
+        if(any>=0) setCurIdx(any);
+        else setScreen("done");
       }
-    },900);
+    },800);
   }
 
   const cur=myStops[curIdx];
+  const curClient=cur?clients.find(x=>x.id===cur.client_id)||{}:{};
   const pending=myStops.filter(s=>s.status!=="entregado").length;
   const delivered=myStops.filter(s=>s.status==="entregado").length;
+  const prods=cur?(cur.products||[]).map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?`${pr.name} ×${p.qty}`:""}).filter(Boolean).join(" · "):""
 
-  /* LOGIN */
+  /* ── LOGIN ──────────────────────────────────────────────────────────────*/
   if(loading) return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
-      <Spinner/>
-      <div style={{fontSize:13,color:"#94a3b8"}}>Conectando…</div>
+      <Spinner/><div style={{fontSize:13,color:"#94a3b8"}}>Conectando…</div>
     </div>
   );
 
   if(screen==="login") return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column"}}>
-      <div style={{padding:"36px 24px 24px",borderBottom:"1px solid #f1f5f9"}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
-          <img src="icon-192.png" style={{width:48,height:48,borderRadius:12}} alt="CachoFer"/>
+      <div style={{padding:"36px 24px 22px",borderBottom:"1px solid #f1f5f9"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+          <img src="icon-192.png" style={{width:46,height:46,borderRadius:12}} alt="CA-Chofer" onError={e=>e.target.style.display="none"}/>
           <div>
-            <div style={{fontSize:22,fontWeight:800,letterSpacing:-.5}}>CachoFer</div>
+            <div style={{fontSize:22,fontWeight:800,letterSpacing:-.5}}>CA-<span style={{color:"#f97316"}}>Chofer</span></div>
             <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5,textTransform:"uppercase"}}>App del Chofer</div>
           </div>
         </div>
         <div style={{fontSize:14,color:"#64748b"}}>Seleccioná tu nombre para ver tu ruta de hoy</div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
-        {syncing&&<div style={{display:"flex",justifyContent:"center",padding:32}}><Spinner/></div>}
-        {!syncing&&drivers.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40,lineHeight:1.7}}>Sin choferes registrados.<br/>Pedile al administrador que cree tu usuario.</div>}
-        {!syncing&&drivers.map(dr=>(
+        {drivers.length===0&&<div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40,lineHeight:1.7}}>Sin choferes registrados.<br/>Pedile al administrador que cree tu usuario.</div>}
+        {drivers.map(dr=>(
           <button key={dr.id} onClick={()=>selectDriver(dr)}
-            style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left",transition:"all .15s",animation:"fadeUp .2s ease"}}>
+            style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left",transition:"all .15s"}}>
             <div style={{width:52,height:52,borderRadius:14,background:dr.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:17,fontWeight:700,flexShrink:0}}>{dr.avatar}</div>
             <div style={{flex:1}}>
               <div style={{fontSize:16,fontWeight:600,marginBottom:3}}>{dr.name}</div>
@@ -227,17 +312,17 @@ function App(){
                 {dr.phone&&<><span style={{color:"#e2e8f0"}}>·</span><span>{dr.phone}</span></>}
               </div>
             </div>
-            <span style={{fontSize:20,color:"#e2e8f0"}}>→</span>
+            <span style={{fontSize:18,color:"#e2e8f0"}}>→</span>
           </button>
         ))}
       </div>
       <div style={{padding:"10px 20px 24px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
-        <div style={{fontSize:11,color:"#cbd5e1"}}>Sincronizado en tiempo real · CachoFer v5</div>
+        <div style={{fontSize:11,color:"#cbd5e1"}}>Sincronizado en tiempo real · CA-Chofer v6</div>
       </div>
     </div>
   );
 
-  /* DONE */
+  /* ── DONE ───────────────────────────────────────────────────────────────*/
   if(screen==="done") return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24}}>
       <div style={{fontSize:72}}>🎉</div>
@@ -251,153 +336,127 @@ function App(){
     </div>
   );
 
-  /* ROUTE LIST */
-  if(screen==="route") return(
-    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa"}}>
-      <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-        <div style={{width:40,height:40,borderRadius:11,background:driver.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
-        <div>
-          <div style={{fontSize:14,fontWeight:700}}>{driver.name}</div>
-          <div style={{fontSize:11,color:"#94a3b8"}}>Ruta de hoy · {new Date().toLocaleDateString("es-AR")}</div>
+  /* ── MAP SCREEN (pantalla principal con mapa + panel inferior) ──────────*/
+  if(screen==="map") return(
+    <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#000",position:"relative"}}>
+
+      {/* Header compacto */}
+      <div style={{height:48,background:"#111",display:"flex",alignItems:"center",padding:"0 14px",gap:10,flexShrink:0,zIndex:10}}>
+        <div style={{width:32,height:32,borderRadius:9,background:driver.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:600,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{driver.name}</div>
+          <div style={{fontSize:10,color:"#555"}}>{delivered}/{myStops.length} entregas · {pending} pendientes</div>
         </div>
-        <div style={{marginLeft:"auto",textAlign:"right"}}>
-          <div style={{fontSize:24,fontWeight:800,color:pending>0?"#f97316":"#10b981"}}>{pending}</div>
-          <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase"}}>pendientes</div>
+        {/* Progress dots */}
+        <div style={{display:"flex",gap:4,flexShrink:0}}>
+          {myStops.map((s,i)=>(
+            <div key={s.id} onClick={()=>setCurIdx(i)}
+              style={{width:s.status==="entregado"?18:i===curIdx?20:14,height:s.status==="entregado"?18:i===curIdx?20:14,borderRadius:"50%",background:s.status==="entregado"?"#10b981":i===curIdx?(PC[s.priority]||"#6366f1"):"#333",color:s.status==="entregado"||i===curIdx?"#fff":"#666",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,cursor:"pointer",transition:"all .2s",border:i===curIdx?"2px solid #fff":"none"}}>
+              {s.status==="entregado"?"✓":i+1}
+            </div>
+          ))}
         </div>
       </div>
-      <div style={{height:3,background:"#f1f5f9",flexShrink:0}}>
-        <div style={{height:"100%",background:"#10b981",width:`${myStops.length>0?(delivered/myStops.length)*100:0}%`,transition:"width .6s ease"}}/>
+
+      {/* Mapa — ocupa todo el espacio disponible */}
+      <div style={{flex:1,position:"relative"}}>
+        <RouteMap
+          stops={myStops}
+          clients={clients}
+          curIdx={curIdx}
+          driver={driver}
+          depot={depot}
+          onMarkerClick={i=>setCurIdx(i)}
+        />
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:1,background:"#f1f5f9",flexShrink:0}}>
-        {[[myStops.length,"TOTAL"],[delivered,"ENTREGADAS"],[pending,"PENDIENTES"]].map(([v,l])=>(
-          <div key={l} style={{background:"#fff",padding:"10px 0",textAlign:"center"}}>
-            <div style={{fontSize:22,fontWeight:700}}>{v}</div>
-            <div style={{fontSize:9,color:"#94a3b8",letterSpacing:1}}>{l}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{flex:1,overflowY:"auto",padding:"12px 14px 100px"}}>
-        <div style={{fontSize:10,color:"#94a3b8",letterSpacing:2,marginBottom:10,textTransform:"uppercase"}}>Paradas del día</div>
-        {myStops.length===0&&(
-          <div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:56,lineHeight:1.8}}>
-            <div style={{fontSize:40,marginBottom:12}}>📭</div>
-            Sin paradas asignadas para hoy.<br/>Contactá al administrador.
+
+      {/* Panel inferior deslizable */}
+      <div style={{background:"#fff",borderRadius:"18px 18px 0 0",boxShadow:"0 -4px 20px rgba(0,0,0,0.15)",flexShrink:0,zIndex:10,maxHeight:showPanel?"70%":"auto",overflowY:"auto"}}>
+
+        {/* Handle + toggle */}
+        <div onClick={()=>setShowPanel(p=>!p)} style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 6px",cursor:"pointer",flexShrink:0}}>
+          <div style={{width:36,height:4,borderRadius:4,background:"#e2e8f0",marginBottom:4}}/>
+          {!showPanel&&cur&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px 2px",width:"100%"}}>
+              <PTag p={cur.priority}/>
+              <span style={{fontSize:13,fontWeight:600,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{curClient.name||"—"}</span>
+              <span style={{fontSize:12,color:PC[cur.priority],fontWeight:600}}>⏰ {cur.time_limit}</span>
+            </div>
+          )}
+        </div>
+
+        {showPanel&&cur&&(
+          <div style={{padding:"0 14px 24px"}}>
+
+            {/* Info del cliente actual */}
+            <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:14}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+                  <PTag p={cur.priority}/>
+                  <span style={{fontSize:11,color:"#94a3b8",fontWeight:500}}>⏰ {cur.time_limit}</span>
+                  <span style={{fontSize:11,color:"#94a3b8"}}>Parada {curIdx+1}/{myStops.length}</span>
+                </div>
+                <div style={{fontSize:16,fontWeight:700,marginBottom:2}}>{curClient.name||"—"}</div>
+                <div style={{fontSize:12,color:"#64748b",marginBottom:curClient.notes?4:0}}>{curClient.address}</div>
+                {curClient.notes&&<div style={{fontSize:11,color:"#94a3b8",background:"#f8fafc",padding:"4px 8px",borderRadius:6,marginTop:4}}>📝 {curClient.notes}</div>}
+              </div>
+              {curClient.phone&&(
+                <a href={`tel:${curClient.phone}`} style={{width:42,height:42,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,textDecoration:"none",flexShrink:0}}>📞</a>
+              )}
+            </div>
+
+            {/* Productos */}
+            {prods&&(
+              <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#6366f1"}}>
+                📦 {prods}
+              </div>
+            )}
+
+            {/* Observación */}
+            <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Observación opcional (ej: dejé con el portero)…"
+              style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:60,color:"#111",marginBottom:12}}/>
+
+            {/* Botón confirmar */}
+            <button onClick={()=>setShowSig(true)} disabled={confirming}
+              style={{width:"100%",background:"#10b981",border:"none",borderRadius:13,padding:"16px",fontSize:16,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 16px rgba(16,185,129,0.3)",opacity:confirming?.6:1}}>
+              {confirming?"Confirmando…":"✓ Producto entregado"}
+            </button>
+
+            {/* Navegación entre paradas */}
+            {myStops.length>1&&(
+              <div style={{display:"flex",gap:8,marginTop:10}}>
+                <button onClick={()=>setCurIdx(Math.max(0,curIdx-1))} disabled={curIdx===0}
+                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b",opacity:curIdx===0?.4:1}}>
+                  ← Anterior
+                </button>
+                <button onClick={()=>{const next=myStops.findIndex((s,i)=>i>curIdx&&s.status!=="entregado");if(next>=0)setCurIdx(next);}}
+                  disabled={!myStops.find((s,i)=>i>curIdx&&s.status!=="entregado")}
+                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>
+                  Siguiente →
+                </button>
+              </div>
+            )}
           </div>
         )}
-        {myStops.map((s,i)=>{
-          const done=s.status==="entregado", isCur=i===curIdx&&!done;
-          const c=clients.find(x=>x.id===s.client_id)||{};
-          return(
-            <div key={s.id} onClick={()=>{if(!done){setCurIdx(i);setScreen("stop");}}}
-              style={{background:"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#dcfce7":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:done?"default":"pointer",opacity:done?.55:1,display:"flex",alignItems:"center",gap:12}}>
-              <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?PC[s.priority]:"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
-                {done?"✓":i+1}
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
-                <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:13,fontWeight:600,color:PC[s.priority]}}>{s.time_limit}</div>
-                <div style={{fontSize:9,color:"#94a3b8",textTransform:"uppercase",letterSpacing:.5}}>{s.priority}</div>
-              </div>
-            </div>
-          );
-        })}
+
+        {/* Si está todo entregado */}
+        {showPanel&&pending===0&&(
+          <div style={{padding:"16px 14px 28px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:8}}>🎉</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#10b981"}}>¡Todas las entregas completadas!</div>
+            <button onClick={()=>setScreen("done")} style={{marginTop:12,padding:"10px 24px",borderRadius:10,border:"none",background:"#10b981",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>Ver resumen</button>
+          </div>
+        )}
       </div>
-      {pending>0&&cur&&(
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 28px",background:"linear-gradient(to top,#f8f9fa 65%,transparent)"}}>
-          <button onClick={()=>setScreen("stop")} style={{width:"100%",background:"#111",border:"none",borderRadius:14,padding:18,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(0,0,0,0.2)"}}>
-            → Ir a entrega #{curIdx+1}
-          </button>
-        </div>
-      )}
+
+      {/* Firma modal */}
+      {showSig&&<SigPad onCapture={confirmDelivery} onCancel={()=>setShowSig(false)}/>}
+
+      {/* Toast */}
+      {toast&&<div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,zIndex:500,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
   );
 
-  /* STOP DETAIL */
-  if(screen==="stop"&&cur){
-    const s=cur;
-    const c=clients.find(x=>x.id===s.client_id)||{};
-    const mapsUrl=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(c.address||"")}&travelmode=driving`;
-    return(
-      <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#f8f9fa",overflowY:"auto"}}>
-        <div style={{background:"#fff",borderBottom:"1px solid #f1f5f9",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0,boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
-          <button onClick={()=>setScreen("route")} style={{background:"none",border:"none",fontSize:22,color:"#64748b",cursor:"pointer",padding:"2px 6px",borderRadius:6}}>←</button>
-          <div style={{flex:1}}>
-            <div style={{fontSize:13,fontWeight:600}}>Parada {curIdx+1} / {myStops.length}</div>
-            <div style={{fontSize:11,color:"#94a3b8"}}>{pending-1} restantes</div>
-          </div>
-          <div style={{background:PBG[s.priority],border:`1px solid ${PC[s.priority]}30`,borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:600,color:PC[s.priority],textTransform:"capitalize"}}>{s.priority} · ⏰ {s.time_limit}</div>
-        </div>
-        <div style={{padding:"14px 14px 120px"}}>
-          {/* Dirección */}
-          <div style={{background:"#fff",borderRadius:14,padding:"16px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Dirección</div>
-            <div style={{fontSize:18,fontWeight:700,lineHeight:1.3,marginBottom:16}}>{c.address||"Sin dirección"}</div>
-            <a href={mapsUrl} target="_blank" rel="noreferrer"
-              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"13px",borderRadius:10,background:"#1d4ed8",color:"#fff",textDecoration:"none",fontSize:14,fontWeight:600}}>
-              🗺️ Abrir navegación en Maps
-            </a>
-          </div>
-          {/* Destinatario */}
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Destinatario</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <div>
-                <div style={{fontSize:17,fontWeight:700}}>{c.name||"—"}</div>
-                <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{c.phone||"Sin teléfono"}</div>
-              </div>
-              {c.phone&&<a href={`tel:${c.phone}`} style={{width:44,height:44,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,textDecoration:"none"}}>📞</a>}
-            </div>
-            {c.notes&&<div style={{marginTop:10,padding:"8px 10px",background:"#f8fafc",borderRadius:8,fontSize:12,color:"#64748b"}}>📝 {c.notes}</div>}
-          </div>
-          {/* Paquetes */}
-          {(s.products||[]).length>0&&(
-            <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-              <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Paquetes</div>
-              {(s.products||[]).map(item=>{
-                const pr=products.find(x=>x.id===item.productId);
-                return pr?(
-                  <div key={item.productId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f8f9fa"}}>
-                    <div style={{width:32,height:32,borderRadius:8,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>📦</div>
-                    <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{pr.name}</div><div style={{fontSize:11,color:"#94a3b8"}}>{pr.description}</div></div>
-                    <div style={{fontSize:16,fontWeight:700,color:"#6366f1"}}>×{item.qty}</div>
-                  </div>
-                ):null;
-              })}
-            </div>
-          )}
-          {/* Progreso */}
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Progreso</div>
-            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-              {myStops.map((ms,i)=>(
-                <div key={ms.id} onClick={()=>{if(ms.status!=="entregado"){setCurIdx(i);}}}
-                  style={{width:32,height:32,borderRadius:"50%",background:ms.status==="entregado"?"#10b981":i===curIdx?PC[s.priority]:"#f1f5f9",color:ms.status==="entregado"||i===curIdx?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,cursor:ms.status!=="entregado"?"pointer":"default"}}>
-                  {ms.status==="entregado"?"✓":i+1}
-                </div>
-              ))}
-            </div>
-          </div>
-          {/* Nota */}
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 18px",marginBottom:10,border:"1px solid #f1f5f9"}}>
-            <div style={{fontSize:10,fontWeight:600,color:"#94a3b8",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Observación (opcional)</div>
-            <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Ej: Dejé con el portero, nadie en casa…"
-              style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:72,color:"#111"}}/>
-          </div>
-        </div>
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,padding:"12px 14px 28px",background:"linear-gradient(to top,#f8f9fa 65%,transparent)"}}>
-          <button onClick={()=>setShowSig(true)}
-            style={{width:"100%",background:"#10b981",border:"none",borderRadius:14,padding:18,fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 20px rgba(16,185,129,0.3)"}}>
-            ✓ Confirmar entrega
-          </button>
-        </div>
-        {showSig&&<SigPad onCapture={confirmDelivery} onCancel={()=>setShowSig(false)}/>}
-        {toast&&<div style={{position:"fixed",top:72,left:"50%",transform:"translateX(-50%)",background:toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:14,fontWeight:600,zIndex:400,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
-      </div>
-    );
-  }
   return null;
 }
 
