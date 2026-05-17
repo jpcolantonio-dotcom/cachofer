@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -235,7 +234,19 @@ function App(){
       if(d.data)setDrivers(d.data);
       if(cl.data)setClients(cl.data);
       if(pr.data)setProducts(pr.data);
-      try{const dep=JSON.parse(localStorage.getItem("cachofer_depot"));if(dep)setDepot(dep);}catch{}
+      // Cargar depot desde Supabase
+      try{
+        const{data}=await dbGet("config",{key:"depot"});
+        if(data&&data[0]?.value&&data[0].value.address){
+          setDepot(data[0].value);
+        } else {
+          // Fallback a localStorage
+          const local=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");
+          if(local.address)setDepot(local);
+        }
+      }catch{
+        try{const dep=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");if(dep.address)setDepot(dep);}catch{}
+      }
       setLoading(false);
     });
   },[]);
