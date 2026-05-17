@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -7,7 +8,7 @@
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -30,7 +31,7 @@ const { useState, useEffect, useRef } = React;
 /* ── SUPABASE ────────────────────────────────────────────────────────────── */
 const SUPA_URL = "https://jnhwgtvzldxnqyliuyog.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpuaHdndHZ6bGR4bnF5bGl1eW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMjQwMjMsImV4cCI6MjA5NDYwMDAyM30.0dJvN8eVjyB8joit-wrMMp3Hj__EV4EjQMlsrChdfWs";
-const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 const PC  = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
 const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
