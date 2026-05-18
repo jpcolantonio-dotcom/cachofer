@@ -670,7 +670,7 @@ function TripTabs({drvStops,activeTrip,setActiveTrip}){
 }
 
 /* ── DRIVER DETAIL ───────────────────────────────────────────────────────── */
-function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAddStop,onOptimize,onDispatch,onRefresh}){
+function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAddStop,onOptimize,onDispatch,onRefresh,onStopsChange}){
   const drvStops=[...stops.filter(s=>s.driver_id===driver.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
   const unassigned=stops.filter(s=>s.work_date===workDate&&!s.driver_id&&s.status!=="entregado");
   const [search,setSearch]=useState("");
@@ -680,8 +680,7 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
 
   async function assign(sid){
     const trip=activeRouteTrip;
-    // Update local state immediately to preserve activeRouteTrip
-    setStops(prev=>prev.map(s=>s.id===sid?{...s,driver_id:driver.id,route_order:drvStops.length,trip_number:trip}:s));
+    if(onStopsChange) onStopsChange(prev=>prev.map(s=>s.id===sid?{...s,driver_id:driver.id,route_order:drvStops.length,trip_number:trip}:s));
     await dbUpdate("stops",{driver_id:driver.id,route_order:drvStops.length,trip_number:trip},"id",sid);
   }
   async function unassign(sid){await dbUpdate("stops",{driver_id:null,route_order:0},"id",sid);onRefresh();}
@@ -1110,6 +1109,7 @@ function App(){
           onOptimize={handleOptimize}
           onDispatch={handleDispatch}
           onRefresh={fetchAll}
+          onStopsChange={setStops}
         />
       )}
 
