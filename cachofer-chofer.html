@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -252,6 +253,7 @@ function App(){
   const [departedStop,setDepartedStop]   = useState(null);
   const [dualSession,setDualSession]     = useState(false);
   const [showList,setShowList]           = useState(false);
+  const [activeTrip,setActiveTrip]       = useState(1);
 
   const wakeLockRef   = useRef(null);
   const [refreshing,setRefreshing] = useState(false);
@@ -609,9 +611,38 @@ function App(){
         </div>
       </div>
 
+      {/* Selector de viaje activo */}
+      {(()=>{
+        const trips=[...new Set(myStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
+        if(trips.length<=1)return null;
+        return(
+          <div style={{background:"#1a1a1a",padding:"6px 14px",display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+            <span style={{fontSize:10,color:"#555",marginRight:4,whiteSpace:"nowrap"}}>VIAJE:</span>
+            {trips.map(t=>{
+              const done=myStops.filter(s=>(s.trip_number||1)===t).every(s=>s.status==="entregado");
+              const active=activeTrip===t;
+              return(
+                <button key={t} onClick={()=>{
+                  setActiveTrip(t);
+                  const first=myStops.findIndex((s,i)=>(s.trip_number||1)===t&&s.status!=="entregado");
+                  if(first>=0)setCurIdx(first);
+                }} style={{
+                  padding:"5px 14px",borderRadius:20,border:"none",
+                  background:active?"#6366f1":done?"#10b981":"#333",
+                  color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",
+                  transition:"all .2s"
+                }}>
+                  {done?"✓ ":""}Viaje {t}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Map */}
       <div style={{flex:1,position:"relative"}}>
-        <RouteMap stops={myStops} clients={clients} curIdx={curIdx} driver={driver} depot={depot} driverPos={driverPos} onMarkerClick={i=>setCurIdx(i)}/>
+        <RouteMap stops={myStops.filter(s=>(s.trip_number||1)===activeTrip)} clients={clients} curIdx={myStops.filter(s=>(s.trip_number||1)===activeTrip).findIndex((_,i)=>myStops.indexOf(myStops.filter(s=>(s.trip_number||1)===activeTrip)[i])===curIdx)} driver={driver} depot={depot} driverPos={driverPos} onMarkerClick={i=>{const tripStops=myStops.filter(s=>(s.trip_number||1)===activeTrip);const realIdx=myStops.indexOf(tripStops[i]);if(realIdx>=0)setCurIdx(realIdx);}}/>
       </div>
 
       {/* Bottom panel */}
