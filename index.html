@@ -712,8 +712,9 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
                         {[1,2,3,4,5,6].map(n=>{
                           const active=(s.trip_number||1)===n;
                           return(
-                            <button key={n} onClick={async e=>{
+                            <button key={n} onMouseDown={async e=>{
                               e.stopPropagation();
+                              e.preventDefault();
                               setStops(p=>p.map(x=>x.id===s.id?{...x,trip_number:n}:x));
                               await dbUpdate("stops",{trip_number:n},"id",s.id);
                             }} style={{
