@@ -678,7 +678,12 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
   const filtered=search.trim()===""?unassigned:unassigned.filter(s=>{const c=clients.find(x=>x.id===s.client_id)||{};return(c.name||"").toLowerCase().includes(search.toLowerCase())||(c.address||"").toLowerCase().includes(search.toLowerCase());});
   const mapsUrl=buildMapsUrl(drvStops,clients,depot);
 
-  async function assign(sid){await dbUpdate("stops",{driver_id:driver.id,route_order:drvStops.length,trip_number:activeRouteTrip},"id",sid);onRefresh();}
+  async function assign(sid){
+    const trip=activeRouteTrip;
+    // Update local state immediately to preserve activeRouteTrip
+    setStops(prev=>prev.map(s=>s.id===sid?{...s,driver_id:driver.id,route_order:drvStops.length,trip_number:trip}:s));
+    await dbUpdate("stops",{driver_id:driver.id,route_order:drvStops.length,trip_number:trip},"id",sid);
+  }
   async function unassign(sid){await dbUpdate("stops",{driver_id:null,route_order:0},"id",sid);onRefresh();}
   async function moveUp(idx){if(idx===0)return;const a=drvStops[idx-1],b=drvStops[idx];await dbUpdate("stops",{route_order:b.route_order},"id",a.id);await dbUpdate("stops",{route_order:a.route_order},"id",b.id);onRefresh();}
   async function moveDown(idx){if(idx>=drvStops.length-1)return;const a=drvStops[idx],b=drvStops[idx+1];await dbUpdate("stops",{route_order:b.route_order},"id",a.id);await dbUpdate("stops",{route_order:a.route_order},"id",b.id);onRefresh();}
