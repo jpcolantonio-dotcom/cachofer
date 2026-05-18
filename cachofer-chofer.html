@@ -12,6 +12,28 @@
 <meta name="apple-mobile-web-app-title" content="CA-Chofer">
 <meta name="theme-color" content="#111111">
 <link rel="apple-touch-icon" href="icon-512.png">
+<script>
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').then(reg=>{
+    console.log('[App] SW registered');
+  }).catch(e=>console.log('[App] SW error:',e));
+
+  // Listen for location requests from SW
+  navigator.serviceWorker.addEventListener('message', e=>{
+    if(e.data && e.data.type === 'REQUEST_LOCATION'){
+      if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(pos=>{
+          const{latitude:lat,longitude:lng}=pos.coords;
+          navigator.serviceWorker.controller && navigator.serviceWorker.controller.postMessage({
+            type:'LOCATION_RESPONSE', lat, lng,
+            driverId: localStorage.getItem('cachofer_driver_id')
+          });
+        },err=>{},{enableHighAccuracy:true,timeout:10000});
+      }
+    }
+  });
+}
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -294,10 +316,15 @@ function App(){
 
   async function selectDriver(dr){
     setDriver(dr);
+    localStorage.setItem('cachofer_driver_id', dr.id);
     const [stops] = await Promise.all([loadStops(dr.id), reloadDepot()]);
     const first = stops.findIndex(s=>s.status!=="entregado");
     setCurIdx(first>=0?first:0);
     setScreen("map");
+    // Activar GPS en Service Worker (background)
+    if(navigator.serviceWorker && navigator.serviceWorker.controller){
+      navigator.serviceWorker.controller.postMessage({type:'START_GPS', driverId:dr.id});
+    }
   }
 
   // WakeLock: keep screen on in map mode
@@ -492,7 +519,13 @@ function App(){
         <div style={{fontSize:44,fontWeight:800,color:"#10b981"}}>{myStops.length}</div>
         <div style={{fontSize:11,color:"#64748b",letterSpacing:1,textTransform:"uppercase"}}>Entregas realizadas</div>
       </div>
-      <button onClick={()=>{setScreen("login");setDriver(null);setMyStops([]);}} style={{marginTop:12,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
+      <button onClick={()=>{
+        if(navigator.serviceWorker && navigator.serviceWorker.controller){
+          navigator.serviceWorker.controller.postMessage({type:'STOP_GPS'});
+        }
+        localStorage.removeItem('cachofer_driver_id');
+        setScreen("login");setDriver(null);setMyStops([]);
+      }} style={{marginTop:12,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
     </div>
   );
 
