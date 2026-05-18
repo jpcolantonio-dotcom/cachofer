@@ -755,8 +755,18 @@ function App(){
   async function saveDepot(d){
     setDepot(d);
     localStorage.setItem("cachofer_depot",JSON.stringify(d));
-    // También guardar en Supabase para que el chofer lo lea
-    await dbUpdate("config",{value:d,updated_at:new Date().toISOString()},"key","depot");
+    // Upsert en Supabase (insert o update)
+    try{
+      const body = {key:"depot", value:d, updated_at:new Date().toISOString()};
+      const r = await fetch(SUPA_URL+"/rest/v1/config", {
+        method:"POST",
+        headers:{...HW, "Prefer":"resolution=merge-duplicates,return=representation"},
+        body:JSON.stringify(body)
+      });
+      const result = await r.json();
+      console.log("Depot saved:", result);
+      if(!r.ok) console.error("Error saving depot:", result);
+    }catch(e){ console.error("saveDepot error:",e); }
     t_("Depósito guardado ✓");
   }
 
