@@ -92,6 +92,20 @@ function initMap(el,center=[-38.71,-62.27],zoom=13){
   return map;
 }
 
+/* ── OSRM ROUTING ───────────────────────────────────────────────────────── */
+async function getRoute(waypoints){
+  if(waypoints.length < 2) return null;
+  const coords = waypoints.map(p=>p[1]+","+p[0]).join(";");
+  try{
+    const r = await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(5000)});
+    const d = await r.json();
+    if(d.code==="Ok" && d.routes && d.routes.length>0){
+      return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+    }
+  }catch(e){ console.log("OSRM error:",e.message); }
+  return null;
+}
+
 /* ── ROUTE MAP (pantalla del chofer) ─────────────────────────────────────── */
 function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null}){
   const ref=useRef(null);const mapRef=useRef(null);
@@ -122,8 +136,16 @@ function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null}){
       const icon=L.divIcon({className:"",html:`<div style="width:30px;height:30px;border-radius:50%;background:${bg};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25);font-family:Inter,sans-serif">${done?"✓":i+1}</div>`,iconSize:[30,30],iconAnchor:[15,15]});
       L.marker([c.lat,c.lng],{icon}).addTo(map).bindPopup(`<div style="font-family:Inter,sans-serif"><b>#${i+1} — ${c.name}</b><br>${c.address}<br><span style="color:${bg};font-size:11px">⏰ ${s.time_limit} · ${s.priority}${done?" · ✓ Entregado":""}</span></div>`);
     });
-    if(pts.length>1){L.polyline(pts,{color:driverColor,weight:3,dashArray:"7,5",opacity:.7}).addTo(map);map.fitBounds(pts,{padding:[32,32]});}
-    else if(pts.length===1)map.setView(pts[0],15);
+    if(pts.length>1){
+      getRoute(pts).then(coords=>{
+        if(coords && mapRef.current){
+          L.polyline(coords,{color:driverColor,weight:3,opacity:.7}).addTo(mapRef.current);
+        } else if(mapRef.current){
+          L.polyline(pts,{color:driverColor,weight:3,dashArray:"7,5",opacity:.7}).addTo(mapRef.current);
+        }
+      });
+      map.fitBounds(pts,{padding:[32,32]});
+    } else if(pts.length===1) map.setView(pts[0],15);
     setTimeout(()=>map.invalidateSize(),100);
     return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[stops,clients,depot,driver?.current_lat,driver?.current_lng]);
@@ -166,8 +188,11 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
         layersRef.current.push(mk);
       });
       if(routePts.length>1){
-        const poly=L.polyline(routePts,{color,weight:3.5,dashArray:"8,5",opacity:.8}).addTo(map);
-        layersRef.current.push(poly);
+        getRoute(routePts).then(coords=>{
+          if(!mapRef.current)return;
+          const line=L.polyline(coords||routePts,{color,weight:3.5,dashArray:coords?"none":"8,5",opacity:.8}).addTo(mapRef.current);
+          layersRef.current.push(line);
+        });
         const[lat,lng]=routePts[1]||routePts[0];
         const lbl=L.divIcon({className:"",html:`<div style="background:${color};color:#fff;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3);border:1.5px solid #fff">${dr.name}</div>`,iconSize:[0,0],iconAnchor:[-4,14]});
         const lm=L.marker([lat,lng],{icon:lbl,interactive:false,zIndexOffset:500}).addTo(map);
