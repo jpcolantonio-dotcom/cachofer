@@ -12,34 +12,27 @@
 <meta name="apple-mobile-web-app-title" content="CA-Chofer">
 <meta name="theme-color" content="#111111">
 <link rel="apple-touch-icon" href="icon-512.png">
-<script>
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').then(reg=>{
-    console.log('[App] SW registered');
-  }).catch(e=>console.log('[App] SW error:',e));
-
-  // Listen for location requests from SW
-  navigator.serviceWorker.addEventListener('message', e=>{
-    if(e.data && e.data.type === 'REQUEST_LOCATION'){
-      if(navigator.geolocation){
-        navigator.geolocation.getCurrentPosition(pos=>{
-          const{latitude:lat,longitude:lng}=pos.coords;
-          navigator.serviceWorker.controller && navigator.serviceWorker.controller.postMessage({
-            type:'LOCATION_RESPONSE', lat, lng,
-            driverId: localStorage.getItem('cachofer_driver_id')
-          });
-        },err=>{},{enableHighAccuracy:true,timeout:10000});
-      }
-    }
-  });
-}
-</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  navigator.serviceWorker.addEventListener('message',e=>{
+    if(e.data&&e.data.type==='REQUEST_LOCATION'){
+      navigator.geolocation&&navigator.geolocation.getCurrentPosition(pos=>{
+        navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage({
+          type:'LOCATION_RESPONSE',lat:pos.coords.latitude,lng:pos.coords.longitude,
+          driverId:localStorage.getItem('cachofer_driver_id')
+        });
+      },()=>{},{enableHighAccuracy:true,timeout:10000});
+    }
+  });
+}
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body,#root{height:100%;overflow:hidden}
@@ -52,7 +45,6 @@ input,textarea{font-family:'Inter',sans-serif}
 @keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes bannerIn{from{opacity:0;transform:translateY(-100%)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 </style>
 </head>
 <body>
@@ -65,80 +57,66 @@ const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 const HG = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY};
 const HW = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
 
-async function dbGet(table, filters={}, orderBy=null){
-  let url = SUPA_URL+"/rest/v1/"+table+"?select=*";
-  Object.entries(filters).forEach(([k,v])=>{ url+="&"+k+"=eq."+encodeURIComponent(v); });
-  if(orderBy) url+="&order="+orderBy+".asc";
-  const r = await fetch(url,{method:"GET",headers:HG});
-  const d = await r.json();
-  return {data:Array.isArray(d)?d:[],error:r.ok?null:d};
+async function dbGet(table,filters={},orderBy=null){
+  let url=SUPA_URL+"/rest/v1/"+table+"?select=*";
+  Object.entries(filters).forEach(([k,v])=>{url+="&"+k+"=eq."+encodeURIComponent(v);});
+  if(orderBy)url+="&order="+orderBy+".asc";
+  const r=await fetch(url,{method:"GET",headers:HG});
+  const d=await r.json();
+  return{data:Array.isArray(d)?d:[],error:r.ok?null:d};
 }
-async function dbUpdate(table, data, col, val){
-  const r = await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});
-  const d = await r.json();
-  return {data:d,error:r.ok?null:d};
+async function dbUpdate(table,data,col,val){
+  const r=await fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"PATCH",headers:HW,body:JSON.stringify(data)});
+  const d=await r.json();
+  return{data:d,error:r.ok?null:d};
 }
 
-const todayStr = ()=>{
-  const d = new Date();
+const todayStr=()=>{
+  const d=new Date();
   return new Date(d.toLocaleString("en-US",{timeZone:"America/Argentina/Buenos_Aires"})).toISOString().slice(0,10);
 };
-const PC = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
-const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
-const ARRIVE_DIST = 50;
-const DEPART_DIST = 150;
-const DEPOT_DEPART_DIST = 200;
+const fmtTime=ts=>ts?new Date(ts).toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit"}):"—";
+
+const PC={urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
+const PBG={urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
+const TRIP_COLORS=["#6366f1","#f97316","#10b981","#ef4444","#8b5cf6"];
+const getTripColor=n=>TRIP_COLORS[(n-1)%TRIP_COLORS.length];
+const ARRIVE_DIST=50, DEPART_DIST=150, DEPOT_DEPART_DIST=200;
 
 function haversine(lat1,lng1,lat2,lng2){
-  const R=6371000, dLat=(lat2-lat1)*Math.PI/180, dLng=(lng2-lng1)*Math.PI/180;
+  const R=6371000,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
 async function getRoute(waypoints){
-  if(waypoints.length < 2) return null;
-
-  // Intentar OSRM primero
-  const coords = waypoints.map(p=>p[1]+","+p[0]).join(";");
-  const osrmServers = [
-    "https://router.project-osrm.org/route/v1/driving/",
-    "https://routing.openstreetmap.de/routed-car/route/v1/driving/",
-  ];
-  for(const server of osrmServers){
-    try{
-      const r = await fetch(server+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(5000)});
-      const d = await r.json();
-      if(d.code==="Ok" && d.routes && d.routes.length>0){
-        return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
-      }
-    }catch(e){}
-  }
-
-  // Fallback: OpenRouteService (gratuito, requiere key)
-  // Si no funciona ninguno, devolver null (líneas rectas)
+  if(waypoints.length<2)return null;
+  try{
+    const coords=waypoints.map(p=>p[1]+","+p[0]).join(";");
+    const r=await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(6000)});
+    const d=await r.json();
+    if(d.code==="Ok"&&d.routes&&d.routes.length>0)
+      return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+  }catch(e){}
   return null;
 }
-// Alias para compatibilidad
-const getOSRMRoute = getRoute;
 
-function Spinner(){ return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>; }
-function PTag({p}){ return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>; }
+function Spinner(){return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>;}
+function PTag({p}){return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>;}
 
 function SigPad({onCapture,onCancel}){
-  const ref=useRef(null); const drawing=useRef(false); const last=useRef(null);
-  function pos(e,c){ const r=c.getBoundingClientRect(); const src=e.touches?e.touches[0]:e; return{x:src.clientX-r.left,y:src.clientY-r.top}; }
-  function start(e){ e.preventDefault(); drawing.current=true; last.current=pos(e,ref.current); }
-  function move(e){ e.preventDefault(); if(!drawing.current)return; const c=ref.current,ctx=c.getContext("2d"),p=pos(e,c); ctx.beginPath(); ctx.moveTo(last.current.x,last.current.y); ctx.lineTo(p.x,p.y); ctx.strokeStyle="#111"; ctx.lineWidth=2.5; ctx.lineCap="round"; ctx.stroke(); last.current=p; }
-  function end(e){ e.preventDefault(); drawing.current=false; }
-  function clear(){ ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height); }
+  const ref=useRef(null);const drawing=useRef(false);const last=useRef(null);
+  function pos(e,c){const r=c.getBoundingClientRect();const src=e.touches?e.touches[0]:e;return{x:src.clientX-r.left,y:src.clientY-r.top};}
+  function start(e){e.preventDefault();drawing.current=true;last.current=pos(e,ref.current);}
+  function move(e){e.preventDefault();if(!drawing.current)return;const c=ref.current,ctx=c.getContext("2d"),p=pos(e,c);ctx.beginPath();ctx.moveTo(last.current.x,last.current.y);ctx.lineTo(p.x,p.y);ctx.strokeStyle="#111";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.stroke();last.current=p;}
+  function end(e){e.preventDefault();drawing.current=false;}
+  function clear(){ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height);}
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"flex-end",justifyContent:"center",backdropFilter:"blur(3px)"}}>
-      <div style={{background:"#fff",borderRadius:"16px 16px 0 0",padding:20,width:"100%",maxWidth:480,animation:"fadeUp .25s ease",paddingBottom:32}}>
+      <div style={{background:"#fff",borderRadius:"16px 16px 0 0",padding:20,width:"100%",maxWidth:480,paddingBottom:32}}>
         <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>Firma del receptor</div>
-        <div style={{fontSize:12,color:"#94a3b8",marginBottom:12}}>Firmá para confirmar la entrega</div>
         <canvas ref={ref} width={440} height={130} style={{border:"1.5px solid #e2e8f0",borderRadius:10,touchAction:"none",display:"block",width:"100%",background:"#fafafa"}}
-          onMouseDown={start} onMouseMove={move} onMouseUp={end}
-          onTouchStart={start} onTouchMove={move} onTouchEnd={end}/>
+          onMouseDown={start} onMouseMove={move} onMouseUp={end} onTouchStart={start} onTouchMove={move} onTouchEnd={end}/>
         <div style={{display:"flex",gap:8,marginTop:12}}>
           <button onClick={clear} style={{flex:1,padding:"11px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Limpiar</button>
           <button onClick={onCancel} style={{flex:1,padding:"11px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500}}>Cancelar</button>
@@ -149,369 +127,357 @@ function SigPad({onCapture,onCancel}){
   );
 }
 
-function RouteMap({stops, clients, curIdx, driver, depot, onMarkerClick, driverPos}){
-  const ref = useRef(null);
-  const mapRef = useRef(null);
-  const markersRef = useRef([]);
-  const routeRef = useRef(null);
-  const driverMarkerRef = useRef(null);
+// Mapa con soporte para múltiples viajes o viaje específico
+function RouteMap({stops,clients,curIdx,driver,depot,onMarkerClick,driverPos,activeTrip,showAllTrips}){
+  const ref=useRef(null);const mapRef=useRef(null);
+  const markersRef=useRef([]);const routeLayersRef=useRef([]);const driverMarkerRef=useRef(null);
 
   useEffect(()=>{
-    if(!ref.current) return;
-    if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; }
-    const map = L.map(ref.current,{zoomControl:false,attributionControl:false}).setView([-38.71,-62.27],13);
-    mapRef.current = map;
+    if(!ref.current)return;
+    if(mapRef.current){mapRef.current.remove();mapRef.current=null;}
+    const map=L.map(ref.current,{zoomControl:false,attributionControl:false}).setView([-38.71,-62.27],13);
+    mapRef.current=map;
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
     L.control.zoom({position:"bottomright"}).addTo(map);
-    return()=>{ if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; } };
+    return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[]);
 
   useEffect(()=>{
-    const map = mapRef.current;
-    if(!map) return;
-    markersRef.current.forEach(m=>map.removeLayer(m));
-    markersRef.current = [];
-    if(routeRef.current){ map.removeLayer(routeRef.current); routeRef.current=null; }
+    const map=mapRef.current;if(!map)return;
+    markersRef.current.forEach(m=>map.removeLayer(m));markersRef.current=[];
+    routeLayersRef.current.forEach(l=>map.removeLayer(l));routeLayersRef.current=[];
 
-    const waypoints = [];
+    const allPts=[];
 
-    if(depot && depot.lat && depot.lng){
-      waypoints.push([depot.lat, depot.lng]);
-      const di = L.divIcon({className:"",html:'<div style="width:34px;height:34px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">&#127981;</div>',iconSize:[34,34],iconAnchor:[17,34]});
-      markersRef.current.push(L.marker([depot.lat,depot.lng],{icon:di}).addTo(map));
+    // Depot marker
+    if(depot&&depot.lat&&depot.lng){
+      allPts.push([depot.lat,depot.lng]);
+      const di=L.divIcon({className:"",html:'<div style="width:34px;height:34px;border-radius:8px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)">&#127981;</div>',iconSize:[34,34],iconAnchor:[17,17]});
+      markersRef.current.push(L.marker([depot.lat,depot.lng],{icon:di}).addTo(map).bindPopup("<b>🏭 "+( depot.name||"Depósito")+"</b>"));
     }
 
-    const allPts = [...waypoints];
-    stops.forEach((s,i)=>{
-      const c = clients.find(x=>x.id===s.client_id);
-      if(!c || !c.lat || !c.lng) return;
-      waypoints.push([c.lat,c.lng]);
-      allPts.push([c.lat,c.lng]);
-      const done = s.status === "entregado";
-      const arrived = s.arrived_at && s.status !== "entregado";
-      const isCur = i === curIdx;
-      const color = done ? "#10b981" : arrived ? "#f59e0b" : isCur ? (PC[s.priority]||"#6366f1") : "#94a3b8";
-      const size = isCur ? 38 : 28;
-      const label = done ? "✓" : arrived ? "•" : String(i+1);
-      const icon = L.divIcon({className:"",html:'<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;background:'+color+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:'+(isCur?14:11)+'px;font-weight:700;border:'+(isCur?"3px":"2px")+' solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.3);font-family:Inter,sans-serif">'+label+'</div>',iconSize:[size,size],iconAnchor:[size/2,size/2]});
-      const m = L.marker([c.lat,c.lng],{icon}).addTo(map);
-      m.on("click",()=>{ if(onMarkerClick) onMarkerClick(i); });
-      m.bindPopup('<div style="font-family:Inter,sans-serif"><b>'+c.name+'</b><br><span style="font-size:11px;color:#64748b">'+c.address+'</span><br><span style="color:'+color+';font-size:11px">'+s.time_limit+(done?" · Entregado":arrived?" · En parada":"")+'</span></div>');
-      if(isCur) m.openPopup();
-      markersRef.current.push(m);
+    // Determine which trips to show
+    const availableTrips=[...new Set(stops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
+    const tripsToShow=showAllTrips?availableTrips:[activeTrip||1];
+
+    tripsToShow.forEach(tripNum=>{
+      const tripColor=getTripColor(tripNum);
+      const tripStops=stops.filter(s=>(s.trip_number||1)===tripNum).sort((a,b)=>a.route_order-b.route_order);
+      const waypoints=[];
+      if(depot&&depot.lat&&depot.lng) waypoints.push([depot.lat,depot.lng]);
+
+      tripStops.forEach((s,ti)=>{
+        const c=clients.find(x=>x.id===s.client_id);
+        if(!c||!c.lat||!c.lng)return;
+        waypoints.push([c.lat,c.lng]);
+        allPts.push([c.lat,c.lng]);
+        const done=s.status==="entregado";
+        const arrived=s.arrived_at&&!done;
+        const isCur=stops.indexOf(s)===curIdx;
+        const color=done?"#10b981":arrived?"#f59e0b":isCur?tripColor:"#94a3b8";
+        const size=isCur?38:28;
+        const label=done?"✓":arrived?"•":String(ti+1);
+        const icon=L.divIcon({className:"",html:'<div style="width:'+size+'px;height:'+size+'px;border-radius:50%;background:'+color+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:'+(isCur?14:11)+'px;font-weight:700;border:'+(isCur?"3px":"2px")+' solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.3);font-family:Inter,sans-serif">'+label+'</div>',iconSize:[size,size],iconAnchor:[size/2,size/2]});
+        const m=L.marker([c.lat,c.lng],{icon}).addTo(map);
+        m.on("click",()=>{if(onMarkerClick)onMarkerClick(stops.indexOf(s));});
+        m.bindPopup('<div style="font-family:Inter,sans-serif"><b>'+c.name+'</b><br><span style="font-size:11px">'+c.address+'</span><br><span style="color:'+tripColor+';font-size:11px">Viaje '+tripNum+(done?" · ✓ Entregado":arrived?" · En parada":"")+'</span></div>');
+        if(isCur)m.openPopup();
+        markersRef.current.push(m);
+      });
+
+      // Add depot as return point
+      if(depot&&depot.lat&&depot.lng&&waypoints.length>1) waypoints.push([depot.lat,depot.lng]);
+
+      if(waypoints.length>1){
+        getRoute(waypoints).then(coords=>{
+          if(!mapRef.current)return;
+          const line=L.polyline(coords||waypoints,{color:tripColor,weight:4,opacity:.75,dashArray:coords?null:"7,5"}).addTo(mapRef.current);
+          routeLayersRef.current.push(line);
+          // Trip label
+          if(showAllTrips&&waypoints.length>2){
+            const midPt=waypoints[Math.floor(waypoints.length/2)];
+            const lbl=L.divIcon({className:"",html:'<div style="background:'+tripColor+';color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap">V'+tripNum+'</div>',iconSize:[0,0],iconAnchor:[0,0]});
+            const lm=L.marker(midPt,{icon:lbl,interactive:false}).addTo(mapRef.current);
+            routeLayersRef.current.push(lm);
+          }
+        });
+      }
     });
 
-    if(waypoints.length > 1){
-      const color = (driver && driver.color) ? driver.color : "#6366f1";
-      getOSRMRoute(waypoints).then(coords=>{
-        if(!coords || !mapRef.current) return;
-        routeRef.current = L.polyline(coords,{color:color,weight:4,opacity:.75}).addTo(mapRef.current);
-        if(allPts.length > 0) mapRef.current.fitBounds(allPts,{padding:[40,40]});
-      });
-    } else if(allPts.length > 0){
-      map.fitBounds(allPts,{padding:[40,40]});
-    }
-
-    setTimeout(()=>map.invalidateSize(),100);
-  },[stops,clients,curIdx,depot]);
+    if(allPts.length>0) setTimeout(()=>{if(mapRef.current)mapRef.current.fitBounds(allPts,{padding:[40,40]});},200);
+    setTimeout(()=>{if(mapRef.current)mapRef.current.invalidateSize();},100);
+  },[stops,clients,curIdx,depot,activeTrip,showAllTrips]);
 
   useEffect(()=>{
-    const map = mapRef.current;
-    if(!map || !driverPos) return;
-    if(driverMarkerRef.current){ map.removeLayer(driverMarkerRef.current); }
-    const color = (driver && driver.color) ? driver.color : "#6366f1";
-    const icon = L.divIcon({className:"",html:'<div style="width:38px;height:38px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:18px">&#128667;</div>',iconSize:[38,38],iconAnchor:[19,19]});
-    driverMarkerRef.current = L.marker([driverPos.lat,driverPos.lng],{icon:icon,zIndexOffset:999}).addTo(map);
+    const map=mapRef.current;if(!map||!driverPos)return;
+    if(driverMarkerRef.current)map.removeLayer(driverMarkerRef.current);
+    const color=(driver&&driver.color)||"#6366f1";
+    const icon=L.divIcon({className:"",html:'<div style="width:38px;height:38px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:18px">&#128667;</div>',iconSize:[38,38],iconAnchor:[19,19]});
+    driverMarkerRef.current=L.marker([driverPos.lat,driverPos.lng],{icon,zIndexOffset:999}).addTo(map);
   },[driverPos]);
 
   return <div ref={ref} style={{width:"100%",height:"100%"}}/>;
 }
 
 function App(){
-  const [screen,setScreen]       = useState("login");
-  const [loading,setLoading]     = useState(true);
-  const [driver,setDriver]       = useState(null);
-  const [drivers,setDrivers]     = useState([]);
-  const [myStops,setMyStops]     = useState([]);
-  const [clients,setClients]     = useState([]);
-  const [products,setProducts]   = useState([]);
-  const [depot,setDepot]         = useState(()=>{
-    try{
-      const d=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");
-      if(d && d.lat) return d;
-    }catch{}
-    return null;
-  });
-  const [curIdx,setCurIdx]       = useState(0);
-  const [showSig,setShowSig]     = useState(false);
-  const [showPanel,setShowPanel] = useState(true);
-  const [note,setNote]           = useState("");
-  const [toast,setToast]         = useState(null);
-  const [driverPos,setDriverPos] = useState(null);
+  const [screen,setScreen]         = useState("login");
+  const [loading,setLoading]       = useState(true);
+  const [driver,setDriver]         = useState(null);
+  const [drivers,setDrivers]       = useState([]);
+  const [myStops,setMyStops]       = useState([]);
+  const [clients,setClients]       = useState([]);
+  const [products,setProducts]     = useState([]);
+  const [depot,setDepot]           = useState(()=>{try{const d=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");return d&&d.lat?d:null;}catch{return null;}});
+  const [curIdx,setCurIdx]         = useState(0);
+  const [showSig,setShowSig]       = useState(false);
+  const [showPanel,setShowPanel]   = useState(true);
+  const [showList,setShowList]     = useState(false);
+  const [note,setNote]             = useState("");
+  const [toast,setToast]           = useState(null);
+  const [driverPos,setDriverPos]   = useState(null);
+  const [activeTrip,setActiveTrip] = useState(1);
+  const [showAllTrips,setShowAllTrips] = useState(false);
   const [routeChanged,setRouteChanged]   = useState(null);
   const [departedDepot,setDepartedDepot] = useState(false);
   const [departedStop,setDepartedStop]   = useState(null);
+  const [tripComplete,setTripComplete]   = useState(null); // viaje completado, pedir regreso
+  const [refreshing,setRefreshing]       = useState(false);
   const [dualSession,setDualSession]     = useState(false);
-  const [showList,setShowList]           = useState(false);
-  const [activeTrip,setActiveTrip]       = useState(1);
 
-  const wakeLockRef   = useRef(null);
-  const [refreshing,setRefreshing] = useState(false);
-  const arrivedRef    = useRef({});
-  const departedRef   = useRef({});
+  const wakeLockRef  = useRef(null);
+  const arrivedRef   = useRef({});
+  const departedRef  = useRef({});
 
-  async function manualRefresh(){
-    setRefreshing(true);
-    await Promise.all([loadStops(driver.id), reloadDepot()]);
-    setTimeout(()=>setRefreshing(false),800);
-    t_("🔄 Ruta actualizada");
-  }
+  const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
 
-  const t_ = (msg, type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
-
-  // Load base data
   useEffect(()=>{
     async function loadAll(){
       try{
-        const [d,cl,pr] = await Promise.all([
-          dbGet("drivers",{},"name"),
-          dbGet("clients"),
-          dbGet("products",{},"name"),
-        ]);
-        if(d.data) setDrivers(d.data);
-        if(cl.data) setClients(cl.data);
-        if(pr.data) setProducts(pr.data);
-      }catch(e){ console.error("Load error:",e); }
-
+        const [d,cl,pr]=await Promise.all([dbGet("drivers",{},"name"),dbGet("clients"),dbGet("products",{},"name")]);
+        if(d.data)setDrivers(d.data);
+        if(cl.data)setClients(cl.data);
+        if(pr.data)setProducts(pr.data);
+      }catch(e){console.error(e);}
+      // Load depot from Supabase
       try{
-        const {data} = await dbGet("config",{key:"depot"});
-        if(data && data[0] && data[0].value && data[0].value.address){
+        const {data}=await dbGet("config",{key:"depot"});
+        if(data&&data[0]&&data[0].value&&data[0].value.lat){
           setDepot(data[0].value);
-        } else {
-          const local = JSON.parse(localStorage.getItem("cachofer_depot")||"{}");
-          if(local && local.address) setDepot(local);
+          localStorage.setItem("cachofer_depot",JSON.stringify(data[0].value));
         }
-      }catch(e){
-        try{ const dep=JSON.parse(localStorage.getItem("cachofer_depot")||"{}"); if(dep && dep.address) setDepot(dep); }catch{}
-      }
+      }catch{}
       setLoading(false);
     }
     loadAll();
   },[]);
 
   async function loadStops(driverId){
-    const {data} = await dbGet("stops",{driver_id:driverId,work_date:todayStr()},"route_order");
-    if(data) setMyStops(data);
+    const{data}=await dbGet("stops",{driver_id:driverId,work_date:todayStr()},"route_order");
+    if(data)setMyStops(data);
     return data||[];
   }
 
-  // Reload depot from Supabase (called on manual refresh too)
   async function reloadDepot(){
     try{
-      const {data} = await dbGet("config",{key:"depot"});
-      if(data && data[0] && data[0].value && data[0].value.lat){
-        setDepot(data[0].value);
-        return data[0].value;
-      }
-    }catch(e){}
+      const{data}=await dbGet("config",{key:"depot"});
+      if(data&&data[0]&&data[0].value&&data[0].value.lat){setDepot(data[0].value);return data[0].value;}
+    }catch{}
     return null;
   }
 
   async function selectDriver(dr){
-    // Generar token único para esta sesión
-    const myToken = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    localStorage.setItem('cachofer_driver_id', dr.id);
-    localStorage.setItem('cachofer_session_token', myToken);
-
-    // Verificar si hay otra sesión activa
-    const {data:fresh} = await dbGet("drivers",{id:dr.id});
-    if(fresh && fresh[0] && fresh[0].session_token && fresh[0].session_token !== myToken){
-      const lastActive = fresh[0].session_updated_at
-        ? Math.round((Date.now()-new Date(fresh[0].session_updated_at))/60000)
-        : null;
-      if(lastActive !== null && lastActive < 5){
-        setDualSession(true); // mostrar advertencia
-      }
+    setDriver(dr);
+    localStorage.setItem("cachofer_driver_id",dr.id);
+    const myToken=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    localStorage.setItem("cachofer_session_token",myToken);
+    const[stops]=await Promise.all([loadStops(dr.id),reloadDepot()]);
+    // Check dual session
+    const{data:fresh}=await dbGet("drivers",{id:dr.id});
+    if(fresh&&fresh[0]&&fresh[0].session_token&&fresh[0].session_token!==myToken){
+      const min=fresh[0].session_updated_at?Math.round((Date.now()-new Date(fresh[0].session_updated_at))/60000):null;
+      if(min!==null&&min<5)setDualSession(true);
     }
-
-    // Guardar token en Supabase
-    await dbUpdate("drivers",{
-      session_token: myToken,
-      session_updated_at: new Date().toISOString()
-    },"id",dr.id);
-
-    setDriver({...dr, _token: myToken});
-    const [stops] = await Promise.all([loadStops(dr.id), reloadDepot()]);
-    const first = stops.findIndex(s=>s.status!=="entregado");
+    await dbUpdate("drivers",{session_token:myToken,session_updated_at:new Date().toISOString()},"id",dr.id);
+    const first=stops.findIndex(s=>s.status!=="entregado");
+    const firstStop=stops[first>=0?first:0];
+    const firstTrip=firstStop?(firstStop.trip_number||1):1;
+    setActiveTrip(firstTrip);
     setCurIdx(first>=0?first:0);
     setScreen("map");
-    if(navigator.serviceWorker && navigator.serviceWorker.controller){
-      navigator.serviceWorker.controller.postMessage({type:'START_GPS', driverId:dr.id});
-    }
+    if(navigator.serviceWorker&&navigator.serviceWorker.controller)
+      navigator.serviceWorker.controller.postMessage({type:"START_GPS",driverId:dr.id});
   }
 
-  // WakeLock: keep screen on in map mode
+  // WakeLock
   useEffect(()=>{
     if(screen==="map"){
-      if("wakeLock" in navigator){
-        navigator.wakeLock.request("screen").then(lock=>{ wakeLockRef.current=lock; }).catch(()=>{});
-      }
-    } else {
-      if(wakeLockRef.current){ wakeLockRef.current.release(); wakeLockRef.current=null; }
+      navigator.wakeLock&&navigator.wakeLock.request("screen").then(l=>{wakeLockRef.current=l;}).catch(()=>{});
+    }else{
+      wakeLockRef.current&&wakeLockRef.current.release();wakeLockRef.current=null;
     }
-    return()=>{ if(wakeLockRef.current){ wakeLockRef.current.release(); wakeLockRef.current=null; } };
+    return()=>{wakeLockRef.current&&wakeLockRef.current.release();wakeLockRef.current=null;};
   },[screen]);
 
-  // Reactivate WakeLock on visibility change
+  // GPS watch
   useEffect(()=>{
-    function onVisible(){
-      if(screen==="map" && document.visibilityState==="visible" && !wakeLockRef.current){
-        navigator.wakeLock && navigator.wakeLock.request("screen").then(lock=>{ wakeLockRef.current=lock; }).catch(()=>{});
-      }
-    }
-    document.addEventListener("visibilitychange",onVisible);
-    return()=>document.removeEventListener("visibilitychange",onVisible);
-  },[screen]);
-
-  // GPS tracking + auto-detection
-  useEffect(()=>{
-    if(!driver || screen==="login") return;
-    if(!navigator.geolocation) return;
-    let lastSend = 0;
-
-    const id = navigator.geolocation.watchPosition(async pos=>{
-      const {latitude:lat,longitude:lng} = pos.coords;
+    if(!driver||screen==="login")return;
+    if(!navigator.geolocation)return;
+    let lastSend=0;
+    const id=navigator.geolocation.watchPosition(async pos=>{
+      const{latitude:lat,longitude:lng}=pos.coords;
       setDriverPos({lat,lng});
-
-      // Send GPS to Supabase every 15s
-      const now = Date.now();
-      if(now-lastSend > 15000){
-        lastSend = now;
+      const now=Date.now();
+      if(now-lastSend>15000){
+        lastSend=now;
         await dbUpdate("drivers",{current_lat:lat,current_lng:lng,location_updated_at:new Date().toISOString(),status:"en_ruta"},"id",driver.id);
         setDriver(p=>({...p,current_lat:lat,current_lng:lng}));
       }
-
-      // Depot departure detection
+      // Depot departure
       setDepartedDepot(prev=>{
-        if(!prev && depot && depot.lat && depot.lng){
-          const d = haversine(lat,lng,depot.lat,depot.lng);
-          if(d > DEPOT_DEPART_DIST){
-            t_("🚛 Recorrido iniciado — ¡Buen viaje!","arrive");
-            return true;
-          }
+        if(!prev&&depot&&depot.lat&&depot.lng&&haversine(lat,lng,depot.lat,depot.lng)>DEPOT_DEPART_DIST){
+          t_("🚛 Recorrido iniciado — ¡Buen viaje!","arrive");
+          return true;
         }
         return prev;
       });
-
-      // Stop proximity detection
-      setMyStops(currentStops=>{
-        currentStops.forEach(async(s,i)=>{
-          if(s.status === "entregado") return;
-          const c = clients.find(x=>x.id===s.client_id);
-          if(!c || !c.lat || !c.lng) return;
-          const dist = haversine(lat,lng,c.lat,c.lng);
-
-          // ARRIVAL: < 50m
-          if(dist < ARRIVE_DIST && !arrivedRef.current[s.id] && !s.arrived_at){
-            arrivedRef.current[s.id] = true;
-            const ts = new Date().toISOString();
+      // Stop proximity
+      setMyStops(current=>{
+        current.forEach(async(s,i)=>{
+          if(s.status==="entregado")return;
+          const c=clients.find(x=>x.id===s.client_id);
+          if(!c||!c.lat||!c.lng)return;
+          const dist=haversine(lat,lng,c.lat,c.lng);
+          if(dist<ARRIVE_DIST&&!arrivedRef.current[s.id]&&!s.arrived_at){
+            arrivedRef.current[s.id]=true;
+            const ts=new Date().toISOString();
             await dbUpdate("stops",{arrived_at:ts},"id",s.id);
             setMyStops(prev=>prev.map(x=>x.id===s.id?{...x,arrived_at:ts}:x));
             setCurIdx(i);
+            setActiveTrip(s.trip_number||1);
             t_("📍 Llegaste a "+c.name,"arrive");
           }
-
-          // DEPARTURE: > 150m after arrival
-          if(dist > DEPART_DIST && arrivedRef.current[s.id] && !departedRef.current[s.id] && s.status!=="entregado"){
-            departedRef.current[s.id] = true;
-            const ts = new Date().toISOString();
+          if(dist>DEPART_DIST&&arrivedRef.current[s.id]&&!departedRef.current[s.id]&&s.status!=="entregado"){
+            departedRef.current[s.id]=true;
+            const ts=new Date().toISOString();
             await dbUpdate("stops",{departure_at:ts},"id",s.id);
             setMyStops(prev=>prev.map(x=>x.id===s.id?{...x,departure_at:ts}:x));
             setDepartedStop(i);
           }
         });
-        return currentStops;
+        return current;
       });
-    },err=>{ console.log("GPS:",err.message); },{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
-
+    },err=>{},{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
     return()=>navigator.geolocation.clearWatch(id);
   },[driver,screen,clients,depot]);
 
-  // Route change detection: poll every 10s
+  // Route change polling every 10s
   useEffect(()=>{
-    if(!driver || screen==="login") return;
-    const rt = setInterval(async()=>{
-      const {data} = await dbGet("stops",{driver_id:driver.id,work_date:todayStr()},"route_order");
-      if(!data) return;
+    if(!driver||screen==="login")return;
+    const rt=setInterval(async()=>{
+      const{data}=await dbGet("stops",{driver_id:driver.id,work_date:todayStr()},"route_order");
+      if(!data)return;
       setMyStops(prev=>{
-        if(prev.length === 0) return prev;
-        const prevKey = prev.map(s=>s.id+s.route_order).join();
-        const newKey  = data.map(s=>s.id+s.route_order).join();
-        if(prevKey !== newKey){
-          const added   = data.filter(s=>!prev.find(p=>p.id===s.id));
-          const removed = prev.filter(s=>!data.find(d=>d.id===s.id));
-          const reordered = data.filter(s=>{ const p=prev.find(p=>p.id===s.id); return p&&p.route_order!==s.route_order; });
-          let msg = "📋 El recorrido fue modificado";
-          if(added.length>0)   msg = "📦 Se agregaron "+added.length+" parada"+(added.length>1?"s":"")+" al recorrido";
-          else if(removed.length>0) msg = "🗑 Se eliminó una parada del recorrido";
-          else if(reordered.length>0) msg = "🔀 Se reordenó el recorrido";
+        if(prev.length===0)return prev;
+        const pk=prev.map(s=>s.id+s.route_order+(s.trip_number||1)).join();
+        const nk=data.map(s=>s.id+s.route_order+(s.trip_number||1)).join();
+        if(pk!==nk&&prev.length>0){
+          const added=data.filter(s=>!prev.find(p=>p.id===s.id));
+          const removed=prev.filter(s=>!data.find(d=>d.id===s.id));
+          const reordered=data.filter(s=>{const p=prev.find(p=>p.id===s.id);return p&&p.route_order!==s.route_order;});
+          let msg="📋 El recorrido fue modificado";
+          if(added.length>0)msg="📦 Se agregaron "+added.length+" parada"+(added.length>1?"s":"");
+          else if(removed.length>0)msg="🗑 Se eliminó una parada";
+          else if(reordered.length>0)msg="🔀 Se reordenó el recorrido";
           setRouteChanged(msg);
           return data;
         }
         return prev;
       });
     },10000);
-
-    // Full reload every 60 min
-    const hr = setInterval(()=>loadStops(driver.id), 60*60*1000);
-
-    return()=>{ clearInterval(rt); clearInterval(hr); };
+    const hr=setInterval(()=>loadStops(driver.id),60*60*1000);
+    return()=>{clearInterval(rt);clearInterval(hr);};
   },[driver,screen]);
 
-  async function confirmDelivery(sig, stopIdx){
-    const idx = stopIdx !== undefined ? stopIdx : curIdx;
-    const stop = myStops[idx];
-    const now = new Date().toISOString();
-    const timeMin = stop.arrived_at ? Math.round((new Date(now)-new Date(stop.arrived_at))/60000) : null;
+  async function manualRefresh(){
+    setRefreshing(true);
+    await Promise.all([loadStops(driver.id),reloadDepot()]);
+    setTimeout(()=>setRefreshing(false),800);
+    t_("🔄 Ruta actualizada");
+  }
+
+  async function confirmDelivery(sig,stopIdx){
+    const idx=stopIdx!==undefined?stopIdx:curIdx;
+    const stop=myStops[idx];
+    const now=new Date().toISOString();
+    const timeMin=stop.arrived_at?Math.round((new Date(now)-new Date(stop.arrived_at))/60000):null;
     await dbUpdate("stops",{status:"entregado",signature:sig||null,delivery_note:note,delivered_at:now,time_at_stop_minutes:timeMin},"id",stop.id);
-    const updated = myStops.map((s,i)=>i===idx?{...s,status:"entregado",delivered_at:now}:s);
+    const updated=myStops.map((s,i)=>i===idx?{...s,status:"entregado",delivered_at:now}:s);
     setMyStops(updated);
-    setShowSig(false); setNote(""); setDepartedStop(null);
+    setShowSig(false);setNote("");setDepartedStop(null);
     t_("✓ Entrega confirmada");
+
+    // Check if current trip is complete
+    const tripNum=stop.trip_number||1;
+    const tripStops=updated.filter(s=>(s.trip_number||1)===tripNum);
+    const tripDone=tripStops.every(s=>s.status==="entregado");
+    if(tripDone){
+      // Check if there are more trips
+      const allTrips=[...new Set(updated.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
+      const nextTrip=allTrips.find(t=>t>tripNum&&updated.some(s=>(s.trip_number||1)===t&&s.status!=="entregado"));
+      if(nextTrip){
+        setTimeout(()=>setTripComplete({completedTrip:tripNum,nextTrip}),800);
+        return;
+      }
+    }
+
     setTimeout(()=>{
-      const next = updated.findIndex((s,i)=>i>idx&&s.status!=="entregado");
-      if(next>=0) setCurIdx(next);
-      else{ const any=updated.findIndex(s=>s.status!=="entregado"); any>=0?setCurIdx(any):setScreen("done"); }
+      const next=updated.findIndex((s,i)=>i>idx&&s.status!=="entregado"&&(s.trip_number||1)===activeTrip);
+      if(next>=0){setCurIdx(next);}
+      else{
+        const any=updated.findIndex(s=>s.status!=="entregado");
+        any>=0?setCurIdx(any):setScreen("done");
+      }
     },800);
   }
 
-  const cur        = myStops[curIdx];
-  const curClient  = cur ? (clients.find(x=>x.id===cur.client_id)||{}) : {};
-  const prods      = cur ? (cur.products||[]).map(p=>{ const pr=products.find(x=>x.id===p.productId); return pr?pr.name+" ×"+p.qty:""; }).filter(Boolean).join(" · ") : "";
-  const pending    = myStops.filter(s=>s.status!=="entregado").length;
-  const delivered  = myStops.filter(s=>s.status==="entregado").length;
+  function handleTripReturn(nextTrip){
+    setTripComplete(null);
+    setActiveTrip(nextTrip);
+    setDepartedDepot(false); // reset so depot departure is detected again
+    const first=myStops.findIndex(s=>(s.trip_number||1)===nextTrip&&s.status!=="entregado");
+    if(first>=0)setCurIdx(first);
+    t_("🚛 Viaje "+nextTrip+" iniciado");
+  }
 
-  /* LOGIN */
-  if(loading) return(
+  const cur=myStops[curIdx];
+  const curClient=cur?(clients.find(x=>x.id===cur.client_id)||{}):{};
+  const prods=cur?(cur.products||[]).map(p=>{const pr=products.find(x=>x.id===p.productId);return pr?pr.name+" ×"+p.qty:"";}).filter(Boolean).join(" · "):"";
+  const pending=myStops.filter(s=>s.status!=="entregado").length;
+  const delivered=myStops.filter(s=>s.status==="entregado").length;
+  const tripColor=getTripColor(activeTrip);
+  const driverColor=(driver&&driver.color)||"#6366f1";
+  const availableTrips=[...new Set(myStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
+
+  /* ── LOGIN ──────────────────────────────────────────────────────────── */
+  if(loading)return(
     <div style={{height:"100%",background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
       <Spinner/><div style={{fontSize:13,color:"#94a3b8"}}>Conectando…</div>
     </div>
   );
 
-  if(screen==="login") return(
+  if(screen==="login")return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column"}}>
       <div style={{padding:"36px 24px 22px",borderBottom:"1px solid #f1f5f9"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
           <img src="icon-192.png" style={{width:46,height:46,borderRadius:12}} alt="" onError={e=>e.target.style.display="none"}/>
           <div>
             <div style={{fontSize:22,fontWeight:800,letterSpacing:-.5}}>CA-<span style={{color:"#f97316"}}>Chofer</span></div>
-            <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5,textTransform:"uppercase"}}>App del Chofer v7</div>
+            <div style={{fontSize:11,color:"#94a3b8",letterSpacing:.5,textTransform:"uppercase"}}>App del Chofer v8</div>
           </div>
         </div>
         <div style={{fontSize:14,color:"#64748b"}}>Seleccioná tu nombre para ver tu ruta de hoy</div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
-        {drivers.length===0 && <div style={{textAlign:"center",color:"#cbd5e1",fontSize:13,marginTop:40}}>Sin choferes registrados.</div>}
         {drivers.map(dr=>(
           <button key={dr.id} onClick={()=>selectDriver(dr)}
             style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:"1.5px solid #f1f5f9",background:"#fff",marginBottom:10,textAlign:"left"}}>
@@ -527,14 +493,11 @@ function App(){
           </button>
         ))}
       </div>
-      <div style={{padding:"10px 20px 24px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
-        <div style={{fontSize:11,color:"#cbd5e1"}}>CA-Chofer v7 · Detección GPS automática</div>
-      </div>
     </div>
   );
 
-  /* DONE */
-  if(screen==="done") return(
+  /* ── DONE ───────────────────────────────────────────────────────────── */
+  if(screen==="done")return(
     <div style={{height:"100%",background:"#fff",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:24}}>
       <div style={{fontSize:72}}>🎉</div>
       <div style={{fontSize:26,fontWeight:800,color:"#10b981"}}>¡Ruta completada!</div>
@@ -543,201 +506,147 @@ function App(){
         <div style={{fontSize:11,color:"#64748b",letterSpacing:1,textTransform:"uppercase"}}>Entregas realizadas</div>
       </div>
       <button onClick={()=>{
-        if(navigator.serviceWorker && navigator.serviceWorker.controller){
-          navigator.serviceWorker.controller.postMessage({type:'STOP_GPS'});
-        }
-        localStorage.removeItem('cachofer_driver_id');
-        setScreen("login");setDriver(null);setMyStops([]);
+        navigator.serviceWorker&&navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage({type:"STOP_GPS"});
+        localStorage.removeItem("cachofer_driver_id");
+        setScreen("login");setDriver(null);setMyStops([]);setDepartedDepot(false);
       }} style={{marginTop:12,padding:"10px 24px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar sesión</button>
     </div>
   );
 
-  /* MAP */
-  if(screen==="map") return(
+  /* ── MAP ────────────────────────────────────────────────────────────── */
+  if(screen==="map")return(
     <div style={{height:"100%",display:"flex",flexDirection:"column",background:"#000",position:"relative"}}>
 
-      {/* Banner: sesión duplicada */}
-      {dualSession && (
-        <div style={{background:"#7c3aed",color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,zIndex:20,flexShrink:0}}>
-          <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
-          <span style={{fontSize:13,fontWeight:600,flex:1,lineHeight:1.3}}>
-            Este chofer ya tiene la app abierta en otro dispositivo. El GPS puede saltar entre los dos.
-          </span>
-          <button onClick={()=>setDualSession(false)} style={{background:"rgba(255,255,255,.25)",border:"none",borderRadius:8,padding:"5px 12px",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>OK</button>
+      {/* Banner sesión duplicada */}
+      {dualSession&&(
+        <div style={{background:"#7c3aed",color:"#fff",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,zIndex:20,flexShrink:0}}>
+          <span style={{fontSize:13,fontWeight:600,flex:1}}>⚠️ Este chofer ya tiene la app abierta en otro dispositivo</span>
+          <button onClick={()=>setDualSession(false)} style={{background:"rgba(255,255,255,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>OK</button>
         </div>
       )}
 
-      {/* Banner: cambio de ruta */}
-      {routeChanged && (
-        <div style={{background:"#f97316",color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",gap:10,zIndex:20,flexShrink:0,animation:"bannerIn .3s ease"}}>
-          <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
-          <span style={{fontSize:13,fontWeight:600,flex:1,lineHeight:1.3}}>{routeChanged}</span>
-          <button onClick={()=>setRouteChanged(null)} style={{background:"rgba(255,255,255,.25)",border:"none",borderRadius:8,padding:"5px 12px",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>OK</button>
+      {/* Banner cambio de ruta */}
+      {routeChanged&&(
+        <div style={{background:"#f97316",color:"#fff",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,zIndex:20,flexShrink:0,animation:"bannerIn .3s ease"}}>
+          <span style={{fontSize:13,fontWeight:600,flex:1}}>⚠️ {routeChanged}</span>
+          <button onClick={()=>setRouteChanged(null)} style={{background:"rgba(255,255,255,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>OK</button>
         </div>
       )}
 
       {/* Header */}
-      <div style={{height:48,background:"#111",display:"flex",alignItems:"center",padding:"0 14px",gap:10,flexShrink:0,zIndex:10}}>
-        <div style={{width:32,height:32,borderRadius:9,background:driver.color||"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
+      <div style={{height:48,background:"#111",display:"flex",alignItems:"center",padding:"0 14px",gap:8,flexShrink:0,zIndex:10}}>
+        <div style={{width:32,height:32,borderRadius:9,background:driverColor,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0}}>{driver.avatar}</div>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:12,fontWeight:600,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{driver.name}</div>
-          <div style={{fontSize:10,color:"#555"}}>
-            {delivered}/{myStops.length} entregas · {pending} pendientes
-            {departedDepot ? " · 🚛 En ruta" : (depot && depot.address ? " · 🏭 En depósito" : "")}
-          </div>
+          <div style={{fontSize:10,color:"#555"}}>{delivered}/{myStops.length} · {pending} pendientes{departedDepot?" · 🚛 En ruta":depot?" · 🏭 En depósito":""}  </div>
         </div>
-        <button onClick={()=>setShowList(p=>!p)}
-          style={{width:32,height:32,borderRadius:9,border:"1px solid #333",background:showList?"#6366f1":"#1a1a1a",color:"#fff",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          📋
-        </button>
-        <button onClick={manualRefresh} disabled={refreshing}
-          style={{width:32,height:32,borderRadius:9,border:"1px solid #333",background:refreshing?"#222":"#1a1a1a",color:"#fff",fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,animation:refreshing?"spin .7s linear infinite":"none"}}>
-          🔄
-        </button>
-        <div style={{display:"flex",gap:4,flexShrink:0,overflowX:"auto",maxWidth:"40%"}}>
-          {myStops.map((s,i)=>{
-            const done = s.status==="entregado";
-            const arrived = s.arrived_at && !done;
-            const isCur = i===curIdx;
-            const bg = done?"#10b981":arrived?"#f59e0b":isCur?(PC[s.priority]||"#6366f1"):"#333";
-            const sz = isCur?20:14;
-            return(
-              <div key={s.id} onClick={()=>setCurIdx(i)}
-                style={{width:sz,height:sz,borderRadius:"50%",background:bg,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:700,cursor:"pointer",border:isCur?"2px solid #fff":"none",flexShrink:0}}>
-                {done?"✓":i+1}
-              </div>
-            );
-          })}
-        </div>
+        <button onClick={()=>setShowList(p=>!p)} style={{width:30,height:30,borderRadius:8,border:"1px solid #333",background:showList?"#6366f1":"#1a1a1a",color:"#fff",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>📋</button>
+        <button onClick={manualRefresh} disabled={refreshing} style={{width:30,height:30,borderRadius:8,border:"1px solid #333",background:"#1a1a1a",color:"#fff",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,animation:refreshing?"spin .7s linear infinite":"none"}}>🔄</button>
       </div>
 
-      {/* Selector de viaje activo */}
-      {(()=>{
-        const trips=[...new Set(myStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
-        if(trips.length<=1)return null;
-        return(
-          <div style={{background:"#1a1a1a",padding:"6px 14px",display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
-            <span style={{fontSize:10,color:"#555",marginRight:4,whiteSpace:"nowrap"}}>VIAJE:</span>
-            {trips.map(t=>{
-              const done=myStops.filter(s=>(s.trip_number||1)===t).every(s=>s.status==="entregado");
-              const active=activeTrip===t;
-              return(
-                <button key={t} onClick={()=>{
-                  setActiveTrip(t);
-                  const first=myStops.findIndex((s,i)=>(s.trip_number||1)===t&&s.status!=="entregado");
-                  if(first>=0)setCurIdx(first);
-                }} style={{
-                  padding:"5px 14px",borderRadius:20,border:"none",
-                  background:active?"#6366f1":done?"#10b981":"#333",
-                  color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",
-                  transition:"all .2s"
-                }}>
-                  {done?"✓ ":""}Viaje {t}
-                </button>
-              );
-            })}
-          </div>
-        );
-      })()}
+      {/* Trip selector bar */}
+      {availableTrips.length>1&&(
+        <div style={{background:"#1a1a1a",padding:"6px 14px",display:"flex",gap:6,alignItems:"center",flexShrink:0,overflowX:"auto"}}>
+          {availableTrips.map(t=>{
+            const tColor=getTripColor(t);
+            const tDone=myStops.filter(s=>(s.trip_number||1)===t).every(s=>s.status==="entregado");
+            const active=!showAllTrips&&activeTrip===t;
+            return(
+              <button key={t} onClick={()=>{setActiveTrip(t);setShowAllTrips(false);const f=myStops.findIndex(s=>(s.trip_number||1)===t&&s.status!=="entregado");if(f>=0)setCurIdx(f);}}
+                style={{padding:"5px 12px",borderRadius:20,border:"2px solid "+(active?tColor:"#333"),background:active?tColor:"transparent",color:active?"#fff":tDone?"#10b981":"#888",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+                {tDone?"✓ ":""}V{t}
+              </button>
+            );
+          })}
+          <button onClick={()=>setShowAllTrips(p=>!p)}
+            style={{padding:"5px 12px",borderRadius:20,border:"2px solid "+(showAllTrips?"#fff":"#333"),background:showAllTrips?"#fff":"transparent",color:showAllTrips?"#111":"#666",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,marginLeft:4}}>
+            {showAllTrips?"● Todos":"○ Todos"}
+          </button>
+        </div>
+      )}
 
       {/* Map */}
       <div style={{flex:1,position:"relative"}}>
-        <RouteMap stops={myStops.filter(s=>(s.trip_number||1)===activeTrip)} clients={clients} curIdx={myStops.filter(s=>(s.trip_number||1)===activeTrip).findIndex((_,i)=>myStops.indexOf(myStops.filter(s=>(s.trip_number||1)===activeTrip)[i])===curIdx)} driver={driver} depot={depot} driverPos={driverPos} onMarkerClick={i=>{const tripStops=myStops.filter(s=>(s.trip_number||1)===activeTrip);const realIdx=myStops.indexOf(tripStops[i]);if(realIdx>=0)setCurIdx(realIdx);}}/>
+        <RouteMap
+          stops={myStops} clients={clients} curIdx={curIdx}
+          driver={driver} depot={depot} driverPos={driverPos}
+          activeTrip={activeTrip} showAllTrips={showAllTrips}
+          onMarkerClick={i=>{setCurIdx(i);setActiveTrip(myStops[i]?.trip_number||1);}}
+        />
       </div>
 
       {/* Bottom panel */}
       <div style={{background:"#fff",borderRadius:"18px 18px 0 0",boxShadow:"0 -4px 20px rgba(0,0,0,.15)",flexShrink:0,zIndex:10,maxHeight:showPanel?"68%":"auto",overflowY:"auto"}}>
-
-        {/* Handle */}
         <div onClick={()=>setShowPanel(p=>!p)} style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"10px 0 6px",cursor:"pointer"}}>
           <div style={{width:36,height:4,borderRadius:4,background:"#e2e8f0",marginBottom:4}}/>
-          {!showPanel && cur && (
+          {!showPanel&&cur&&(
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px 2px",width:"100%"}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:tripColor,flexShrink:0}}/>
               <PTag p={cur.priority}/>
               <span style={{fontSize:13,fontWeight:600,flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{curClient.name||"—"}</span>
-              <span style={{fontSize:12,color:PC[cur.priority],fontWeight:600}}>⏰ {cur.time_limit}</span>
+              <span style={{fontSize:11,color:tripColor,fontWeight:600}}>V{activeTrip}</span>
             </div>
           )}
         </div>
 
-        {/* Depot status when not yet departed */}
-        {showPanel && !departedDepot && depot && depot.address && pending > 0 && (
+        {/* Depot waiting */}
+        {showPanel&&!departedDepot&&depot&&depot.address&&pending>0&&(
           <div style={{margin:"0 14px 12px",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20,flexShrink:0}}>🏭</span>
+            <span style={{fontSize:20}}>🏭</span>
             <div style={{flex:1}}>
               <div style={{fontSize:12,fontWeight:600,color:"#166534"}}>{depot.name||"Depósito"}</div>
               <div style={{fontSize:11,color:"#4ade80"}}>{depot.address}</div>
             </div>
-            <div style={{fontSize:11,color:"#166534",fontWeight:500,whiteSpace:"nowrap"}}>Esperando salida…</div>
+            <div style={{fontSize:11,color:"#166534",fontWeight:500}}>Esperando salida…</div>
           </div>
         )}
 
-        {/* Current stop info */}
-        {showPanel && cur && cur.status !== "entregado" && (
+        {/* Current stop */}
+        {showPanel&&cur&&cur.status!=="entregado"&&(
           <div style={{padding:"0 14px 24px"}}>
             <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
               <div style={{flex:1}}>
                 <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
+                  <div style={{background:tripColor,color:"#fff",borderRadius:12,padding:"2px 8px",fontSize:10,fontWeight:700}}>V{activeTrip}</div>
                   <PTag p={cur.priority}/>
                   <span style={{fontSize:11,color:"#94a3b8"}}>⏰ {cur.time_limit}</span>
-                  <span style={{fontSize:11,color:"#94a3b8"}}>#{curIdx+1}/{myStops.length}</span>
-                  {cur.arrived_at && <span style={{fontSize:10,fontWeight:600,color:"#f59e0b",background:"#fffbeb",padding:"1px 6px",borderRadius:10}}>📍 En parada</span>}
+                  <span style={{fontSize:11,color:"#94a3b8"}}>#{curIdx+1}</span>
+                  {cur.arrived_at&&<span style={{fontSize:10,fontWeight:600,color:"#f59e0b",background:"#fffbeb",padding:"1px 6px",borderRadius:10}}>📍 {fmtTime(cur.arrived_at)}</span>}
                 </div>
                 <div style={{fontSize:16,fontWeight:700,marginBottom:2}}>{curClient.name||"—"}</div>
                 <div style={{fontSize:12,color:"#64748b",marginBottom:curClient.notes?4:0}}>{curClient.address}</div>
-                {curClient.notes && <div style={{fontSize:11,color:"#94a3b8",background:"#f8fafc",padding:"4px 8px",borderRadius:6,marginTop:4}}>📝 {curClient.notes}</div>}
+                {curClient.notes&&<div style={{fontSize:11,color:"#94a3b8",background:"#f8fafc",padding:"4px 8px",borderRadius:6,marginTop:4}}>📝 {curClient.notes}</div>}
               </div>
-              {curClient.phone && (
-                <a href={"tel:"+curClient.phone} style={{width:42,height:42,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,textDecoration:"none",flexShrink:0}}>📞</a>
-              )}
+              {curClient.phone&&<a href={"tel:"+curClient.phone} style={{width:42,height:42,borderRadius:12,background:"#f0fdf4",border:"1px solid #bbf7d0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,textDecoration:"none",flexShrink:0}}>📞</a>}
             </div>
-
-            {prods && <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#6366f1"}}>📦 {prods}</div>}
-
-            {cur.arrived_at && (
-              <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#92400e"}}>
-                📍 Llegaste a las {new Date(cur.arrived_at).toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit"})}
-              </div>
-            )}
-
+            {prods&&<div style={{background:"#f8fafc",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#6366f1"}}>📦 {prods}</div>}
             <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Observación opcional…"
               style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none",resize:"none",height:56,color:"#111",marginBottom:12}}/>
-
             <button onClick={()=>setShowSig(true)}
               style={{width:"100%",background:"#10b981",border:"none",borderRadius:13,padding:"16px",fontSize:16,fontWeight:700,color:"#fff",cursor:"pointer",boxShadow:"0 4px 16px rgba(16,185,129,.3)"}}>
               ✓ Producto entregado
             </button>
-
-            {myStops.length > 1 && (
+            {myStops.filter(s=>(s.trip_number||1)===activeTrip).length>1&&(
               <div style={{display:"flex",gap:8,marginTop:10}}>
-                <button onClick={()=>setCurIdx(Math.max(0,curIdx-1))} disabled={curIdx===0}
-                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b",opacity:curIdx===0?0.4:1}}>
-                  ← Anterior
-                </button>
-                <button onClick={()=>{ const n=myStops.findIndex((s,i)=>i>curIdx&&s.status!=="entregado"); if(n>=0)setCurIdx(n); }}
-                  disabled={!myStops.find((s,i)=>i>curIdx&&s.status!=="entregado")}
-                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>
-                  Siguiente →
-                </button>
+                <button onClick={()=>{const t=myStops.filter(s=>(s.trip_number||1)===activeTrip);const ci=t.indexOf(cur);if(ci>0)setCurIdx(myStops.indexOf(t[ci-1]));}}
+                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>← Anterior</button>
+                <button onClick={()=>{const t=myStops.filter(s=>(s.trip_number||1)===activeTrip);const ci=t.indexOf(cur);const next=t.slice(ci+1).find(s=>s.status!=="entregado");if(next)setCurIdx(myStops.indexOf(next));}}
+                  style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Siguiente →</button>
               </div>
             )}
           </div>
         )}
 
-        {showPanel && cur && cur.status === "entregado" && (
+        {showPanel&&cur&&cur.status==="entregado"&&pending>0&&(
           <div style={{padding:"12px 14px 24px",textAlign:"center"}}>
             <div style={{fontSize:28,marginBottom:6}}>✅</div>
-            <div style={{fontSize:14,fontWeight:600,color:"#10b981"}}>Entregado en {curClient.name}</div>
-            {pending > 0 && (
-              <button onClick={()=>{ const n=myStops.findIndex((s,i)=>i>curIdx&&s.status!=="entregado"); if(n>=0)setCurIdx(n); }}
-                style={{marginTop:10,padding:"10px 20px",borderRadius:10,border:"none",background:"#111",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
-                Ir al siguiente →
-              </button>
-            )}
+            <div style={{fontSize:14,fontWeight:600,color:"#10b981",marginBottom:10}}>Entregado en {curClient.name}</div>
+            <button onClick={()=>{const next=myStops.findIndex((s,i)=>i>curIdx&&s.status!=="entregado"&&(s.trip_number||1)===activeTrip);if(next>=0)setCurIdx(next);}}
+              style={{padding:"10px 20px",borderRadius:10,border:"none",background:"#111",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>Ir al siguiente →</button>
           </div>
         )}
 
-        {showPanel && pending === 0 && (
+        {showPanel&&pending===0&&(
           <div style={{padding:"16px 14px 28px",textAlign:"center"}}>
             <div style={{fontSize:32,marginBottom:8}}>🎉</div>
             <div style={{fontSize:16,fontWeight:700,color:"#10b981"}}>¡Todas las entregas completadas!</div>
@@ -746,82 +655,90 @@ function App(){
         )}
       </div>
 
-      {/* Departure confirmation popup */}
-      {departedStop !== null && myStops[departedStop] && myStops[departedStop].status !== "entregado" && (()=>{
-        const s = myStops[departedStop];
-        const c = clients.find(x=>x.id===s.client_id)||{};
+      {/* Trip complete - return to depot */}
+      {tripComplete&&(
+        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 20px)",maxWidth:460,background:"#fff",borderRadius:"16px 16px 0 0",boxShadow:"0 -8px 32px rgba(0,0,0,.25)",zIndex:500,padding:"20px 18px 32px"}}>
+          <div style={{fontSize:22,marginBottom:8,textAlign:"center"}}>🏭</div>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:4,textAlign:"center"}}>¡Viaje {tripComplete.completedTrip} completado!</div>
+          <div style={{fontSize:13,color:"#64748b",marginBottom:16,textAlign:"center"}}>Volvé al depósito antes de iniciar el Viaje {tripComplete.nextTrip}</div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>setTripComplete(null)} style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>Cerrar</button>
+            <button onClick={()=>handleTripReturn(tripComplete.nextTrip)}
+              style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:"#6366f1",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>✓ Ya volví al depósito → Viaje {tripComplete.nextTrip}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Departure confirmation */}
+      {departedStop!==null&&myStops[departedStop]&&myStops[departedStop].status!=="entregado"&&(()=>{
+        const s=myStops[departedStop];const c=clients.find(x=>x.id===s.client_id)||{};
         return(
-          <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 20px)",maxWidth:460,background:"#fff",borderRadius:"16px 16px 0 0",boxShadow:"0 -8px 32px rgba(0,0,0,.25)",zIndex:500,padding:"20px 18px 32px",animation:"fadeUp .3s ease"}}>
+          <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"calc(100% - 20px)",maxWidth:460,background:"#fff",borderRadius:"16px 16px 0 0",boxShadow:"0 -8px 32px rgba(0,0,0,.25)",zIndex:500,padding:"20px 18px 32px"}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:4,color:"#f97316"}}>⚠️ ¿Confirmás la entrega?</div>
             <div style={{fontSize:14,fontWeight:600,marginBottom:2}}>{c.name}</div>
             <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>Detectamos que te alejaste. ¿Realizaste la entrega?</div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setDepartedStop(null)} style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #e2e8f0",background:"#fff",fontSize:13,fontWeight:500,color:"#64748b"}}>No entregué</button>
-              <button onClick={()=>{ setCurIdx(departedStop); setShowSig(true); }} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:"#10b981",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>✓ Sí, confirmar</button>
+              <button onClick={()=>{setCurIdx(departedStop);setShowSig(true);}} style={{flex:2,padding:"12px",borderRadius:10,border:"none",background:"#10b981",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>✓ Confirmar</button>
             </div>
           </div>
         );
       })()}
 
-      {/* Lista de paradas agrupadas por viaje */}
-      {showList && (
+      {/* Lista de todos los viajes */}
+      {showList&&(
         <div style={{position:"fixed",inset:0,background:"#f8f9fa",zIndex:300,display:"flex",flexDirection:"column"}}>
           <div style={{background:"#111",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <button onClick={()=>setShowList(false)} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 4px"}}>←</button>
+            <button onClick={()=>setShowList(false)} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer"}}>←</button>
             <span style={{fontSize:14,fontWeight:600,color:"#fff",flex:1}}>Todos los viajes</span>
-            <span style={{fontSize:12,color:"#555"}}>{delivered}/{myStops.length} entregadas</span>
+            <span style={{fontSize:12,color:"#555"}}>{delivered}/{myStops.length}</span>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
-            {(()=>{
-              const trips = {};
-              myStops.forEach((s,i)=>{ const t=s.trip_number||1; if(!trips[t])trips[t]=[]; trips[t].push({s,i}); });
-              return Object.keys(trips).map(Number).sort((a,b)=>a-b).map(tripNum=>{
-                const tripStops = trips[tripNum];
-                const tripDone = tripStops.every(({s})=>s.status==="entregado");
-                const tripPending = tripStops.filter(({s})=>s.status!=="entregado").length;
-                return(
-                  <div key={tripNum} style={{marginBottom:20}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                      <div style={{background:tripDone?"#10b981":"#6366f1",color:"#fff",borderRadius:20,padding:"4px 14px",fontSize:12,fontWeight:700}}>
-                        🚛 Viaje {tripNum}
-                      </div>
-                      <span style={{fontSize:11,color:"#94a3b8"}}>{tripStops.length} paradas · {tripPending} pendientes</span>
-                      <div style={{flex:1,height:1,background:"#e2e8f0"}}/>
-                      {tripDone && <span style={{fontSize:11,fontWeight:600,color:"#10b981"}}>✓ Completo</span>}
+            {availableTrips.map(t=>{
+              const tColor=getTripColor(t);
+              const tStops=myStops.filter(s=>(s.trip_number||1)===t);
+              const tDone=tStops.every(s=>s.status==="entregado");
+              const tPending=tStops.filter(s=>s.status!=="entregado").length;
+              return(
+                <div key={t} style={{marginBottom:20}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                    <div style={{background:tDone?"#10b981":tColor,color:"#fff",borderRadius:20,padding:"4px 14px",fontSize:12,fontWeight:700}}>
+                      🚛 Viaje {t}
                     </div>
-                    {tripStops.map(({s,i})=>{
-                      const done=s.status==="entregado", isCur=i===curIdx;
-                      const c=clients.find(x=>x.id===s.client_id)||{};
-                      return(
-                        <div key={s.id} onClick={()=>{setCurIdx(i);setShowList(false);}}
-                          style={{background:"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#dcfce7":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12,opacity:done?.6:1}}>
-                          <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?(PC[s.priority]||"#6366f1"):"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
-                            {done?"✓":i+1}
-                          </div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
-                            <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
-                          </div>
-                          <div style={{textAlign:"right",flexShrink:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:done?"#10b981":PC[s.priority]}}>{done?"✓ OK":s.time_limit}</div>
-                            <div style={{fontSize:9,color:"#94a3b8",textTransform:"uppercase"}}>{s.priority}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <span style={{fontSize:11,color:"#94a3b8"}}>{tStops.length} paradas · {tPending} pendientes</span>
+                    <div style={{flex:1,height:1,background:"#e2e8f0"}}/>
+                    {tDone&&<span style={{fontSize:11,fontWeight:600,color:"#10b981"}}>✓ Completo</span>}
                   </div>
-                );
-              });
-            })()}
+                  {tStops.map((s,ti)=>{
+                    const done=s.status==="entregado";
+                    const c=clients.find(x=>x.id===s.client_id)||{};
+                    return(
+                      <div key={s.id} onClick={()=>{setCurIdx(myStops.indexOf(s));setActiveTrip(t);setShowAllTrips(false);setShowList(false);}}
+                        style={{background:"#fff",border:"1.5px solid "+( done?"#dcfce7":"#f1f5f9"),borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12,opacity:done?.6:1}}>
+                        <div style={{width:30,height:30,borderRadius:"50%",flexShrink:0,background:done?"#10b981":tColor,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
+                          {done?"✓":ti+1}
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
+                        </div>
+                        <div style={{textAlign:"right",flexShrink:0}}>
+                          <div style={{fontSize:12,fontWeight:600,color:done?"#10b981":tColor}}>{done?"✓":s.time_limit}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {showSig && <SigPad onCapture={sig=>confirmDelivery(sig,curIdx)} onCancel={()=>setShowSig(false)}/>}
-      {toast && <div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",background:toast.type==="arrive"?"#f59e0b":toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,zIndex:500,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
+      {showSig&&<SigPad onCapture={sig=>confirmDelivery(sig,curIdx)} onCancel={()=>setShowSig(false)}/>}
+      {toast&&<div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",background:toast.type==="arrive"?"#f59e0b":"#10b981",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,zIndex:500,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
   );
-
   return null;
 }
 
