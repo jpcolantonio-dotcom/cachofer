@@ -780,7 +780,7 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
           <div style={{flex:1,padding:10}}>
             {drvStops.length===0
               ?<div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#cbd5e1",fontSize:13,flexDirection:"column",gap:8,textAlign:"center",padding:20}}><span style={{fontSize:40}}>🗺️</span>Asigná paradas para ver la ruta<br/><span style={{fontSize:11,color:"#e2e8f0"}}>Los clientes necesitan coordenadas (lat/lng)</span></div>
-              :<RouteMap stops={drvStops} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"} driver={driver}/>
+              :<RouteMap stops={drvStops.filter(s=>(s.trip_number||1)===activeRouteTrip)} clients={clients} depot={depot} driverColor={driver.color||"#6366f1"} driver={driver}/>
             }
           </div>
         </div>
