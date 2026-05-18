@@ -146,6 +146,7 @@ function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null,ac
 function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
   const ref=useRef(null);const mapRef=useRef(null);
   const layersRef=useRef([]);const [lastUp,setLastUp]=useState(new Date());
+  const [selectedTrip,setSelectedTrip]=useState(0); // 0 = todos
 
   function clearLayers(map){layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}});layersRef.current=[];}
 
@@ -160,12 +161,13 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
 
     drivers.forEach((dr,di)=>{
       const drvColor=dr.color||"#6366f1";
-      const dashStyle=DRIVER_DASH[di%DRIVER_DASH.length]; // different line style per driver
+      const dashStyle=DRIVER_DASH[di%DRIVER_DASH.length];
       const drvStops=[...stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
       if(!drvStops.length)return;
 
-      // Group by trip
-      const trips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
+      // Group by trip — filter if selectedTrip != 0
+      const trips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b).filter(t=>selectedTrip===0||t===selectedTrip);
+      if(!trips.length)return;
       trips.forEach(t=>{
         const tColor=getTripColor(t);
         const tStops=drvStops.filter(s=>(s.trip_number||1)===t);
@@ -226,7 +228,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
     return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[]);
 
-  useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot]);
+  useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot,selectedTrip]);
 
   useEffect(()=>{
     const iv=setInterval(async()=>{if(onRefresh)await onRefresh();},5000);
@@ -257,14 +259,22 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
               </div>
             );
           })}
-          {/* Trip color legend */}
+          {/* Trip selector */}
           <div style={{display:"flex",gap:4,alignItems:"center",marginLeft:4}}>
-            {[1,2,3,4,5].map(t=>(
-              <div key={t} style={{display:"flex",alignItems:"center",gap:3,padding:"2px 7px",borderRadius:12,background:getTripColor(t)+"22",border:`1px solid ${getTripColor(t)}`}}>
-                <div style={{width:8,height:8,borderRadius:"50%",background:getTripColor(t)}}/>
-                <span style={{fontSize:10,color:"#fff",fontWeight:600}}>V{t}</span>
-              </div>
-            ))}
+            <button onClick={()=>setSelectedTrip(0)}
+              style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(selectedTrip===0?"#fff":"#333"),background:selectedTrip===0?"#fff":"transparent",color:selectedTrip===0?"#111":"#666",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              Todos
+            </button>
+            {[1,2,3,4,5].map(t=>{
+              const hasStops=stops.some(s=>s.work_date===workDate&&(s.trip_number||1)===t);
+              const active=selectedTrip===t;
+              return(
+                <button key={t} onClick={()=>setSelectedTrip(active?0:t)}
+                  style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(active?getTripColor(t):"#333"),background:active?getTripColor(t):"transparent",color:active?"#fff":hasStops?getTripColor(t):"#444",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,opacity:hasStops?1:.4}}>
+                  V{t}
+                </button>
+              );
+            })}
           </div>
         </div>
         <span style={{fontSize:11,color:"#333",fontFamily:"monospace",flexShrink:0}}>{fmt(lastUp)}</span>
