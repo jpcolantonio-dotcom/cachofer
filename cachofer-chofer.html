@@ -210,7 +210,13 @@ function App(){
   const [myStops,setMyStops]     = useState([]);
   const [clients,setClients]     = useState([]);
   const [products,setProducts]   = useState([]);
-  const [depot,setDepot]         = useState(null);
+  const [depot,setDepot]         = useState(()=>{
+    try{
+      const d=JSON.parse(localStorage.getItem("cachofer_depot")||"{}");
+      if(d && d.lat) return d;
+    }catch{}
+    return null;
+  });
   const [curIdx,setCurIdx]       = useState(0);
   const [showSig,setShowSig]     = useState(false);
   const [showPanel,setShowPanel] = useState(true);
