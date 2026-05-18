@@ -215,7 +215,7 @@ function App(){
 
   async function manualRefresh(){
     setRefreshing(true);
-    await loadStops(driver.id);
+    await Promise.all([loadStops(driver.id), reloadDepot()]);
     setTimeout(()=>setRefreshing(false),800);
     t_("🔄 Ruta actualizada");
   }
@@ -258,9 +258,21 @@ function App(){
     return data||[];
   }
 
+  // Reload depot from Supabase (called on manual refresh too)
+  async function reloadDepot(){
+    try{
+      const {data} = await dbGet("config",{key:"depot"});
+      if(data && data[0] && data[0].value && data[0].value.lat){
+        setDepot(data[0].value);
+        return data[0].value;
+      }
+    }catch(e){}
+    return null;
+  }
+
   async function selectDriver(dr){
     setDriver(dr);
-    const stops = await loadStops(dr.id);
+    const [stops] = await Promise.all([loadStops(dr.id), reloadDepot()]);
     const first = stops.findIndex(s=>s.status!=="entregado");
     setCurIdx(first>=0?first:0);
     setScreen("map");
