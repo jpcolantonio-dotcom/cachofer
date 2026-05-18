@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -707,7 +708,19 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
                   <div style={{width:24,height:24,borderRadius:"50%",background:s.status==="entregado"?"#10b981":i===0?"#6366f1":"#f1f5f9",color:s.status==="entregado"||i===0?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{s.status==="entregado"?"✓":i===0?"●":i+1}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3}}><PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>{s.status==="entregado"&&<span style={{fontSize:10,fontWeight:600,color:"#10b981"}}>✓</span>}
-                      <select value={s.trip_number||1} onChange={async e=>{const v=parseInt(e.target.value);await dbUpdate("stops",{trip_number:v},"id",s.id);setStops(p=>p.map(x=>x.id===s.id?{...x,trip_number:v}:x));}} style={{fontSize:10,border:"1px solid #e2e8f0",borderRadius:6,padding:"1px 4px",background:"#f8fafc",cursor:"pointer",marginLeft:"auto"}} onClick={e=>e.stopPropagation()}>
+                      <select value={s.trip_number||1}
+                        onChange={async e=>{
+                          e.stopPropagation();
+                          const v=parseInt(e.target.value);
+                          // Actualizar estado local inmediatamente
+                          setStops(p=>p.map(x=>x.id===s.id?{...x,trip_number:v}:x));
+                          // Guardar en Supabase
+                          const res=await dbUpdate("stops",{trip_number:v},"id",s.id);
+                          if(res.error) console.error("Error saving trip:",res.error);
+                          else console.log("Trip saved:",s.id,"->",v);
+                        }}
+                        onClick={e=>e.stopPropagation()}
+                        style={{fontSize:12,border:"1.5px solid #bfdbfe",borderRadius:8,padding:"4px 8px",background:"#eff6ff",cursor:"pointer",marginLeft:"auto",color:"#1d4ed8",fontWeight:700,minWidth:52}}>
                         {[1,2,3,4,5].map(n=><option key={n} value={n}>V{n}</option>)}
                       </select>
                     </div>
