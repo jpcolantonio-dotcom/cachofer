@@ -209,8 +209,16 @@ function App(){
   const [departedStop,setDepartedStop]   = useState(null);
 
   const wakeLockRef   = useRef(null);
+  const [refreshing,setRefreshing] = useState(false);
   const arrivedRef    = useRef({});
   const departedRef   = useRef({});
+
+  async function manualRefresh(){
+    setRefreshing(true);
+    await loadStops(driver.id);
+    setTimeout(()=>setRefreshing(false),800);
+    t_("🔄 Ruta actualizada");
+  }
 
   const t_ = (msg, type="ok") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
 
@@ -477,7 +485,11 @@ function App(){
             {departedDepot ? " · 🚛 En ruta" : (depot && depot.address ? " · 🏭 En depósito" : "")}
           </div>
         </div>
-        <div style={{display:"flex",gap:4,flexShrink:0,overflowX:"auto",maxWidth:"45%"}}>
+        <button onClick={manualRefresh} disabled={refreshing}
+          style={{width:32,height:32,borderRadius:9,border:"1px solid #333",background:refreshing?"#222":"#1a1a1a",color:"#fff",fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,animation:refreshing?"spin .7s linear infinite":"none"}}>
+          🔄
+        </button>
+        <div style={{display:"flex",gap:4,flexShrink:0,overflowX:"auto",maxWidth:"40%"}}>
           {myStops.map((s,i)=>{
             const done = s.status==="entregado";
             const arrived = s.arrived_at && !done;
