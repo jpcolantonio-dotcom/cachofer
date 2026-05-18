@@ -56,7 +56,19 @@ const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
 const PO  = {urgente:0,alta:1,media:2,baja:3};
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#84cc16"];
 const initials = n=>n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
-const todayStr = ()=>new Date().toISOString().slice(0,10);
+const todayStr = ()=>{
+  const d=new Date();
+  const ar=new Date(d.toLocaleString("en-US",{timeZone:"America/Argentina/Buenos_Aires"}));
+  return ar.toISOString().slice(0,10);
+};
+const fmtTime = ts=>{
+  if(!ts)return"—";
+  return new Date(ts).toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit"});
+};
+const fmtDateTime = ts=>{
+  if(!ts)return"—";
+  return new Date(ts).toLocaleString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+};
 const fmtDate  = d=>{if(!d)return"";const[y,m,day]=d.split("-");return`${day}/${m}/${y}`;};
 const dayName  = d=>{const days=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];return days[new Date(d+"T12:00:00").getDay()];};
 
@@ -236,7 +248,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
     return()=>clearInterval(iv);
   },[]);
 
-  const fmt=t=>`${String(t.getHours()).padStart(2,"0")}:${String(t.getMinutes()).padStart(2,"0")}:${String(t.getSeconds()).padStart(2,"0")}`;
+  const fmt=t=>t.toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 
   return(
     <div style={{position:"fixed",inset:0,background:"#111",zIndex:600,display:"flex",flexDirection:"column"}}>
@@ -596,7 +608,7 @@ function StatsPage({stops,drivers,clients,workDate}){
                 const dr=drivers.find(x=>x.id===s.driver_id)||{};
                 const t=stopTime(s);
                 const done=s.status==="entregado";
-                const fmt2=ts=>ts?new Date(ts).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"—";
+                const fmt2=ts=>ts?new Date(ts).toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit"}):"—";
                 return(
                   <div key={s.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto auto",padding:"10px 16px",borderTop:"1px solid #f8fafc",fontSize:13,gap:8,alignItems:"center",opacity:done?1:.6}}>
                     <div>
