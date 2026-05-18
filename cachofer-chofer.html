@@ -70,18 +70,31 @@ function haversine(lat1,lng1,lat2,lng2){
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
-async function getOSRMRoute(waypoints){
+async function getRoute(waypoints){
   if(waypoints.length < 2) return null;
-  try{
-    const coords = waypoints.map(p=>p[1]+","+p[0]).join(";");
-    const r = await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson");
-    const d = await r.json();
-    if(d.code==="Ok" && d.routes && d.routes.length>0){
-      return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
-    }
-  }catch(e){ console.log("OSRM error",e); }
+
+  // Intentar OSRM primero
+  const coords = waypoints.map(p=>p[1]+","+p[0]).join(";");
+  const osrmServers = [
+    "https://router.project-osrm.org/route/v1/driving/",
+    "https://routing.openstreetmap.de/routed-car/route/v1/driving/",
+  ];
+  for(const server of osrmServers){
+    try{
+      const r = await fetch(server+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(5000)});
+      const d = await r.json();
+      if(d.code==="Ok" && d.routes && d.routes.length>0){
+        return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+      }
+    }catch(e){}
+  }
+
+  // Fallback: OpenRouteService (gratuito, requiere key)
+  // Si no funciona ninguno, devolver null (líneas rectas)
   return null;
 }
+// Alias para compatibilidad
+const getOSRMRoute = getRoute;
 
 function Spinner(){ return <div style={{width:28,height:28,border:"3px solid #e2e8f0",borderTop:"3px solid #6366f1",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>; }
 function PTag({p}){ return <span style={{fontSize:10,fontWeight:600,padding:"2px 8px",borderRadius:20,background:PBG[p],color:PC[p],letterSpacing:.3,textTransform:"capitalize"}}>{p}</span>; }
