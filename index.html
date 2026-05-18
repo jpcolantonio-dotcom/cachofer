@@ -642,7 +642,7 @@ function StatsPage({stops,drivers,clients,workDate}){
 }
 
 /* ── TRIP TABS ───────────────────────────────────────────────────────────── */
-function TripTabs({drvStops,activeTrip,setActiveTrip,setStops,dbUpdate}){
+function TripTabs({drvStops,activeTrip,setActiveTrip}){
   const trips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
   // Always show at least trips 1-3
   const allTrips=[...new Set([...trips,1,2,3])].sort((a,b)=>a-b).slice(0,6);
@@ -724,11 +724,6 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
         </div>
         {/* Ruta */}
         <div style={{borderRight:"1px solid #f1f5f9",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-          {(()=>{
-            const trips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
-            if(trips.length<=1) trips.splice(0,trips.length,1);
-            return null;
-          })()}
           <div style={{padding:"0",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
             {/* Header */}
             <div style={{padding:"10px 16px 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -736,7 +731,7 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
               <span style={{fontSize:10,color:"#cbd5e1"}}>↑↓ reordenar</span>
             </div>
             {/* Pestañas de viaje */}
-            <TripTabs drvStops={drvStops} activeTrip={activeRouteTrip} setActiveTrip={setActiveRouteTrip} setStops={setStops} dbUpdate={dbUpdate}/>
+            <TripTabs drvStops={drvStops} activeTrip={activeRouteTrip} setActiveTrip={setActiveRouteTrip}/>
           </div>
           <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
             {drvStops.filter(s=>(s.trip_number||1)===activeRouteTrip).length===0&&<div style={{textAlign:"center",color:"#e2e8f0",fontSize:13,marginTop:32}}>Sin paradas en Viaje {activeRouteTrip}.<br/><span style={{fontSize:11}}>Asigná paradas a este viaje desde otra pestaña.</span></div>}
