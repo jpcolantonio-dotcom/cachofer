@@ -57,7 +57,10 @@ async function dbUpdate(table, data, col, val){
   return {data:d,error:r.ok?null:d};
 }
 
-const todayStr = () => new Date().toISOString().slice(0,10);
+const todayStr = ()=>{
+  const d = new Date();
+  return new Date(d.toLocaleString("en-US",{timeZone:"America/Argentina/Buenos_Aires"})).toISOString().slice(0,10);
+};
 const PC = {urgente:"#ef4444",alta:"#f97316",media:"#3b82f6",baja:"#94a3b8"};
 const PBG = {urgente:"#fef2f2",alta:"#fff7ed",media:"#eff6ff",baja:"#f8fafc"};
 const ARRIVE_DIST = 50;
@@ -593,7 +596,7 @@ function App(){
 
             {cur.arrived_at && (
               <div style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#92400e"}}>
-                📍 Llegaste a las {new Date(cur.arrived_at).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}
+                📍 Llegaste a las {new Date(cur.arrived_at).toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit"})}
               </div>
             )}
 
