@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -252,6 +251,7 @@ function App(){
   const [departedDepot,setDepartedDepot] = useState(false);
   const [departedStop,setDepartedStop]   = useState(null);
   const [dualSession,setDualSession]     = useState(false);
+  const [showList,setShowList]           = useState(false);
 
   const wakeLockRef   = useRef(null);
   const [refreshing,setRefreshing] = useState(false);
@@ -584,6 +584,10 @@ function App(){
             {departedDepot ? " · 🚛 En ruta" : (depot && depot.address ? " · 🏭 En depósito" : "")}
           </div>
         </div>
+        <button onClick={()=>setShowList(p=>!p)}
+          style={{width:32,height:32,borderRadius:9,border:"1px solid #333",background:showList?"#6366f1":"#1a1a1a",color:"#fff",fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          📋
+        </button>
         <button onClick={manualRefresh} disabled={refreshing}
           style={{width:32,height:32,borderRadius:9,border:"1px solid #333",background:refreshing?"#222":"#1a1a1a",color:"#fff",fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,animation:refreshing?"spin .7s linear infinite":"none"}}>
           🔄
@@ -727,6 +731,60 @@ function App(){
           </div>
         );
       })()}
+
+      {/* Lista de paradas agrupadas por viaje */}
+      {showList && (
+        <div style={{position:"fixed",inset:0,background:"#f8f9fa",zIndex:300,display:"flex",flexDirection:"column"}}>
+          <div style={{background:"#111",padding:"14px 16px",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <button onClick={()=>setShowList(false)} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:"0 4px"}}>←</button>
+            <span style={{fontSize:14,fontWeight:600,color:"#fff",flex:1}}>Todos los viajes</span>
+            <span style={{fontSize:12,color:"#555"}}>{delivered}/{myStops.length} entregadas</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
+            {(()=>{
+              const trips = {};
+              myStops.forEach((s,i)=>{ const t=s.trip_number||1; if(!trips[t])trips[t]=[]; trips[t].push({s,i}); });
+              return Object.keys(trips).map(Number).sort((a,b)=>a-b).map(tripNum=>{
+                const tripStops = trips[tripNum];
+                const tripDone = tripStops.every(({s})=>s.status==="entregado");
+                const tripPending = tripStops.filter(({s})=>s.status!=="entregado").length;
+                return(
+                  <div key={tripNum} style={{marginBottom:20}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                      <div style={{background:tripDone?"#10b981":"#6366f1",color:"#fff",borderRadius:20,padding:"4px 14px",fontSize:12,fontWeight:700}}>
+                        🚛 Viaje {tripNum}
+                      </div>
+                      <span style={{fontSize:11,color:"#94a3b8"}}>{tripStops.length} paradas · {tripPending} pendientes</span>
+                      <div style={{flex:1,height:1,background:"#e2e8f0"}}/>
+                      {tripDone && <span style={{fontSize:11,fontWeight:600,color:"#10b981"}}>✓ Completo</span>}
+                    </div>
+                    {tripStops.map(({s,i})=>{
+                      const done=s.status==="entregado", isCur=i===curIdx;
+                      const c=clients.find(x=>x.id===s.client_id)||{};
+                      return(
+                        <div key={s.id} onClick={()=>{setCurIdx(i);setShowList(false);}}
+                          style={{background:"#fff",border:`1.5px solid ${isCur?PC[s.priority]:done?"#dcfce7":"#f1f5f9"}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12,opacity:done?.6:1}}>
+                          <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:done?"#10b981":isCur?(PC[s.priority]||"#6366f1"):"#f1f5f9",color:done||isCur?"#fff":"#94a3b8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700}}>
+                            {done?"✓":i+1}
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name||"—"}</div>
+                            <div style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
+                          </div>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:12,fontWeight:600,color:done?"#10b981":PC[s.priority]}}>{done?"✓ OK":s.time_limit}</div>
+                            <div style={{fontSize:9,color:"#94a3b8",textTransform:"uppercase"}}>{s.priority}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      )}
 
       {showSig && <SigPad onCapture={sig=>confirmDelivery(sig,curIdx)} onCancel={()=>setShowSig(false)}/>}
       {toast && <div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",background:toast.type==="arrive"?"#f59e0b":toast.type==="ok"?"#10b981":"#ef4444",color:"#fff",padding:"10px 22px",borderRadius:10,fontSize:13,fontWeight:600,zIndex:500,animation:"slideDown .25s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}

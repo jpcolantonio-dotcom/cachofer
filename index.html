@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -707,7 +706,11 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
                 <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #e2e8f0",display:"flex",gap:8,alignItems:"flex-start",opacity:s.status==="entregado"?.55:1}}>
                   <div style={{width:24,height:24,borderRadius:"50%",background:s.status==="entregado"?"#10b981":i===0?"#6366f1":"#f1f5f9",color:s.status==="entregado"||i===0?"#fff":"#64748b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{s.status==="entregado"?"✓":i===0?"●":i+1}</div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3}}><PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>{s.status==="entregado"&&<span style={{fontSize:10,fontWeight:600,color:"#10b981"}}>✓</span>}</div>
+                    <div style={{display:"flex",gap:5,alignItems:"center",marginBottom:3}}><PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>{s.status==="entregado"&&<span style={{fontSize:10,fontWeight:600,color:"#10b981"}}>✓</span>}
+                      <select value={s.trip_number||1} onChange={async e=>{const v=parseInt(e.target.value);await dbUpdate("stops",{trip_number:v},"id",s.id);setStops(p=>p.map(x=>x.id===s.id?{...x,trip_number:v}:x));}} style={{fontSize:10,border:"1px solid #e2e8f0",borderRadius:6,padding:"1px 4px",background:"#f8fafc",cursor:"pointer",marginLeft:"auto"}} onClick={e=>e.stopPropagation()}>
+                        {[1,2,3,4,5].map(n=><option key={n} value={n}>V{n}</option>)}
+                      </select>
+                    </div>
                     <div style={{fontSize:12,fontWeight:600,marginBottom:1}}>{c.name}</div>
                     <div style={{fontSize:11,color:"#94a3b8",marginBottom:2}}>{c.address}</div>
                     {prods&&<div style={{fontSize:11,color:"#6366f1",marginBottom:4}}>📦 {prods}</div>}
