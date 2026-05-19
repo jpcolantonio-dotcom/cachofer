@@ -143,12 +143,13 @@ function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null,ac
 }
 
 /* ── TV MAP ──────────────────────────────────────────────────────────── */
-function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
+function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh=5,tripColors=null}){
   const ref=useRef(null);const mapRef=useRef(null);
   const layersRef=useRef([]);const [lastUp,setLastUp]=useState(new Date());
   const [selectedTrip,setSelectedTrip]=useState(0); // 0 = todos
 
   function clearLayers(map){layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}});layersRef.current=[];}
+  const getColor=n=>(tripColors&&tripColors[n-1])||getTripColor(n);
 
   function redraw(map){
     clearLayers(map);const allPts=[];
@@ -169,7 +170,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
       const trips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b).filter(t=>selectedTrip===0||t===selectedTrip);
       if(!trips.length)return;
       trips.forEach(t=>{
-        const tColor=getTripColor(t);
+        const tColor=getColor(t);
         const tStops=drvStops.filter(s=>(s.trip_number||1)===t);
         const routePts=[];
         if(depot?.lat&&depot?.lng)routePts.push([depot.lat,depot.lng]);
@@ -231,9 +232,9 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
   useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot,selectedTrip]);
 
   useEffect(()=>{
-    const iv=setInterval(async()=>{if(onRefresh)await onRefresh();},5000);
+    const iv=setInterval(async()=>{if(onRefresh)await onRefresh();},tvRefresh*1000);
     return()=>clearInterval(iv);
-  },[]);
+  },[tvRefresh]);
 
   const fmt=t=>t.toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 
@@ -268,9 +269,10 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh}){
             {[1,2,3,4,5].map(t=>{
               const hasStops=stops.some(s=>s.work_date===workDate&&(s.trip_number||1)===t);
               const active=selectedTrip===t;
+              const tc=getColor(t);
               return(
                 <button key={t} onClick={()=>setSelectedTrip(active?0:t)}
-                  style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(active?getTripColor(t):"#333"),background:active?getTripColor(t):"transparent",color:active?"#fff":hasStops?getTripColor(t):"#444",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,opacity:hasStops?1:.4}}>
+                  style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(active?tc:"#333"),background:active?tc:"transparent",color:active?"#fff":hasStops?tc:"#444",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,opacity:hasStops?1:.4}}>
                   V{t}
                 </button>
               );
@@ -706,6 +708,79 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
   );
 }
 
+/* ── CONFIG MODAL ───────────────────────────────────────────────────── */
+function ConfigModal({config,onClose,onSave}){
+  const [tvRefresh,setTvRefresh]   = useState(config.tvRefresh||5);
+  const [arriveDist,setArriveDist] = useState(config.arriveDist||50);
+  const [departDist,setDepartDist] = useState(config.departDist||150);
+  const [tripColors,setTripColors] = useState(config.tripColors||["#6366f1","#f97316","#10b981","#ef4444","#8b5cf6"]);
+  const PRESETS=["#6366f1","#f97316","#10b981","#ef4444","#8b5cf6","#06b6d4","#f43f5e","#eab308","#84cc16","#ec4899"];
+
+  return(
+    <Modal onClose={onClose} w={500}>
+      <MHead title="⚙️ Configuración" onClose={onClose}/>
+
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:"#111"}}>🗺️ Mapa TV</div>
+        <Field label={"Actualización cada "+tvRefresh+" segundos"}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <input type="range" min={3} max={60} step={1} value={tvRefresh} onChange={e=>setTvRefresh(parseInt(e.target.value))}
+              style={{flex:1,accentColor:"#6366f1"}}/>
+            <span style={{fontSize:14,fontWeight:700,color:"#6366f1",minWidth:36}}>{tvRefresh}s</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#cbd5e1",marginTop:2}}><span>3s (rápido)</span><span>60s (lento)</span></div>
+        </Field>
+      </div>
+
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:"#111"}}>📍 GPS — Detección de paradas</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label={"Llegada: "+arriveDist+"m"}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="range" min={20} max={200} step={10} value={arriveDist} onChange={e=>setArriveDist(parseInt(e.target.value))}
+                style={{flex:1,accentColor:"#10b981"}}/>
+              <span style={{fontSize:13,fontWeight:700,color:"#10b981",minWidth:42}}>{arriveDist}m</span>
+            </div>
+          </Field>
+          <Field label={"Salida: "+departDist+"m"}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="range" min={50} max={500} step={25} value={departDist} onChange={e=>setDepartDist(parseInt(e.target.value))}
+                style={{flex:1,accentColor:"#f97316"}}/>
+              <span style={{fontSize:13,fontWeight:700,color:"#f97316",minWidth:42}}>{departDist}m</span>
+            </div>
+          </Field>
+        </div>
+        <div style={{fontSize:11,color:"#94a3b8",marginTop:-8}}>
+          Llegada: radio para marcar que el chofer llegó. Salida: distancia para pedir confirmación de entrega.
+        </div>
+      </div>
+
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:"#111"}}>🎨 Colores de viajes</div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {[1,2,3,4,5].map((t,i)=>(
+            <div key={t} style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:28,height:28,borderRadius:8,background:tripColors[i],flexShrink:0,border:"2px solid #e2e8f0"}}/>
+              <span style={{fontSize:13,fontWeight:600,color:tripColors[i],minWidth:52}}>Viaje {t}</span>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+                {PRESETS.map(c=>(
+                  <button key={c} onClick={()=>{const nc=[...tripColors];nc[i]=c;setTripColors(nc);}}
+                    style={{width:22,height:22,borderRadius:6,background:c,border:tripColors[i]===c?"2.5px solid #111":"2px solid transparent",cursor:"pointer",flexShrink:0}}/>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={()=>{onSave({tvRefresh,arriveDist,departDist,tripColors});onClose();}} variant="primary">Guardar configuración</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 /* ── MAIN APP ────────────────────────────────────────────────────────── */
 function App(){
   const [loading,setLoading]   = useState(true);
@@ -723,6 +798,8 @@ function App(){
   const [showTV,setShowTV]     = useState(false);
   const [connected,setConnected] = useState(false);
   const [depot,setDepot]       = useState(()=>{try{return JSON.parse(localStorage.getItem("cachofer_depot"))||{name:"",address:"",lat:null,lng:null};}catch{return{name:"",address:"",lat:null,lng:null};}});
+  const [appConfig,setAppConfig] = useState(()=>{try{return JSON.parse(localStorage.getItem("cachofer_config"))||{tvRefresh:5,arriveDist:50,departDist:150,tripColors:["#6366f1","#f97316","#10b981","#ef4444","#8b5cf6"]};}catch{return{tvRefresh:5,arriveDist:50,departDist:150,tripColors:["#6366f1","#f97316","#10b981","#ef4444","#8b5cf6"]};}});
+  const [showConfig,setShowConfig] = useState(false);
 
   const t_=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
 
@@ -738,6 +815,12 @@ function App(){
       if(data&&data[0]?.value?.lat){setDepot(data[0].value);localStorage.setItem("cachofer_depot",JSON.stringify(data[0].value));}
     });
   },[]);
+
+  function saveConfig(c){
+    setAppConfig(c);
+    localStorage.setItem("cachofer_config",JSON.stringify(c));
+    t_("Configuración guardada ✓");
+  }
 
   async function saveDepot(d){
     setDepot(d);localStorage.setItem("cachofer_depot",JSON.stringify(d));
@@ -827,6 +910,7 @@ function App(){
           {navItem("stats","Estadísticas","📊")}
           <div style={{flex:1}}/>
           <button onClick={()=>setModal({type:"depot"})} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:"transparent",color:"#64748b",fontSize:13,width:"100%",textAlign:"left",cursor:"pointer"}}><span style={{fontSize:16}}>⚙️</span>Depósito</button>
+          <button onClick={()=>setShowConfig(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,border:"none",background:"transparent",color:"#64748b",fontSize:13,width:"100%",textAlign:"left",cursor:"pointer"}}><span style={{fontSize:16}}>🔧</span>Configuración</button>
           <div style={{fontSize:10,color:"#cbd5e1",padding:"4px 12px"}}>CA-Chofer v7</div>
         </nav>
 
@@ -979,7 +1063,7 @@ function App(){
           onClose={()=>setDetailDrv(null)} onAddStop={()=>setModal({type:"addStop"})}
           onOptimize={handleOptimize} onDispatch={handleDispatch} onRefresh={fetchAll} onStopsChange={setStops}/>
       )}
-      {showTV&&<TVMap drivers={drivers} stops={stops} clients={clients} depot={depot} workDate={workDate} onClose={()=>setShowTV(false)} onRefresh={fetchAll}/>}
+      {showTV&&<TVMap drivers={drivers} stops={stops} clients={clients} depot={depot} workDate={workDate} onClose={()=>setShowTV(false)} onRefresh={fetchAll} tvRefresh={appConfig.tvRefresh||5} tripColors={appConfig.tripColors}/>}
       {showHistory&&<HistoryModal onClose={()=>setShowHistory(false)} workDate={workDate} onLoadDate={d=>{setWorkDate(d);t_(`Viendo ${fmtDate(d)}`);}}/>}
       {modal?.type==="addStop"     &&<StopModal    clients={clients} products={products} workDate={workDate} onClose={()=>setModal(null)} onSave={saveStop}/>}
       {modal?.type==="editStop"    &&<StopModal    initial={modal.data} clients={clients} products={products} workDate={workDate} onClose={()=>setModal(null)} onSave={saveStop}/>}
@@ -990,6 +1074,7 @@ function App(){
       {modal?.type==="addDriver"   &&<DriverModal  onClose={()=>setModal(null)} onSave={saveDriver}/>}
       {modal?.type==="editDriver"  &&<DriverModal  initial={modal.data} onClose={()=>setModal(null)} onSave={saveDriver}/>}
       {modal?.type==="depot"       &&<DepotModal   initial={depot} onClose={()=>setModal(null)} onSave={saveDepot}/>}
+      {showConfig&&<ConfigModal config={appConfig} onClose={()=>setShowConfig(false)} onSave={saveConfig}/>}
       {confirm&&<Confirm msg={confirm.msg} onConfirm={confirm.fn} onClose={()=>setConfirm(null)}/>}
       {toast&&<div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#ef4444":"#111",color:"#fff",padding:"10px 20px",borderRadius:10,fontSize:13,fontWeight:500,boxShadow:"0 4px 20px rgba(0,0,0,0.15)",zIndex:999,animation:"toastIn .2s ease",whiteSpace:"nowrap"}}>{toast.msg}</div>}
     </div>
