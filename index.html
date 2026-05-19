@@ -147,6 +147,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
   const ref=useRef(null);const mapRef=useRef(null);
   const layersRef=useRef([]);const [lastUp,setLastUp]=useState(new Date());
   const [selectedTrip,setSelectedTrip]=useState(0); // 0 = todos
+  const [selectedDrivers,setSelectedDrivers]=useState(new Set()); // empty = todos
 
   function clearLayers(map){layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}});layersRef.current=[];}
   const getColor=n=>(tripColors&&tripColors[n-1])||getTripColor(n);
@@ -161,6 +162,8 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
     }
 
     drivers.forEach((dr,di)=>{
+      // Filter by selected drivers (if any selected)
+      if(selectedDrivers.size>0&&!selectedDrivers.has(dr.id))return;
       const drvColor=dr.color||"#6366f1";
       const dashStyle=DRIVER_DASH[di%DRIVER_DASH.length];
       const drvStops=[...stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
@@ -229,7 +232,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
     return()=>{if(mapRef.current){mapRef.current.remove();mapRef.current=null;}};
   },[]);
 
-  useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot,selectedTrip]);
+  useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot,selectedTrip,selectedDrivers]);
 
   useEffect(()=>{
     const iv=setInterval(async()=>{if(onRefresh)await onRefresh();},tvRefresh*1000);
@@ -260,7 +263,32 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
               </div>
             );
           })}
-          {/* Trip selector */}
+          {/* Driver selector */}
+          <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap"}}>
+            <button onClick={()=>setSelectedDrivers(new Set())}
+              style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(selectedDrivers.size===0?"#fff":"#333"),background:selectedDrivers.size===0?"#fff":"transparent",color:selectedDrivers.size===0?"#111":"#666",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+              Todos
+            </button>
+            {drivers.filter(dr=>stops.some(s=>s.driver_id===dr.id&&s.work_date===workDate)).map(dr=>{
+              const active=selectedDrivers.has(dr.id);
+              const color=dr.color||"#6366f1";
+              return(
+                <button key={dr.id} onClick={()=>{
+                  setSelectedDrivers(prev=>{
+                    const next=new Set(prev);
+                    if(next.has(dr.id))next.delete(dr.id);
+                    else next.add(dr.id);
+                    return next;
+                  });
+                }} style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(active?color:"#333"),background:active?color:"transparent",color:active?"#fff":color,fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+                  {dr.avatar} {dr.name.split(" ")[0]}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{width:1,height:24,background:"#222",flexShrink:0}}/>
+
+        {/* Trip selector */}
           <div style={{display:"flex",gap:4,alignItems:"center",marginLeft:4}}>
             <button onClick={()=>setSelectedTrip(0)}
               style={{padding:"3px 10px",borderRadius:20,border:"1.5px solid "+(selectedTrip===0?"#fff":"#333"),background:selectedTrip===0?"#fff":"transparent",color:selectedTrip===0?"#111":"#666",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
