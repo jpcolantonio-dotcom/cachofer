@@ -552,7 +552,9 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
   const mapsUrl=buildMapsUrl(drvStops.filter(s=>(s.trip_number||1)===activeTrip),clients,depot);
   const filtered=search.trim()===""?unassigned:unassigned.filter(s=>{const c=clients.find(x=>x.id===s.client_id)||{};return(c.name||"").toLowerCase().includes(search.toLowerCase())||(c.address||"").toLowerCase().includes(search.toLowerCase());});
   const availTrips=[...new Set(drvStops.map(s=>s.trip_number||1))].sort((a,b)=>a-b);
-  if(!availTrips.includes(activeTrip)&&availTrips.length>0)setActiveTrip(availTrips[0]);
+  useEffect(()=>{
+    if(availTrips.length>0&&!availTrips.includes(activeTrip)) setActiveTrip(availTrips[0]);
+  },[drvStops.length]);
 
   async function assign(sid){
     if(onStopsChange)onStopsChange(prev=>prev.map(s=>s.id===sid?{...s,driver_id:driver.id,route_order:drvStops.length,trip_number:activeTrip}:s));
@@ -630,9 +632,10 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
                 const cnt=drvStops.filter(s=>(s.trip_number||1)===t).length;
                 const done=cnt>0&&drvStops.filter(s=>(s.trip_number||1)===t).every(s=>s.status==="entregado");
                 const active=!showAllTrips&&activeTrip===t;
+                const tColor=getTripColor(t);
                 return(
                   <button key={t} onClick={()=>{setActiveTrip(t);setShowAllTrips(false);}}
-                    style={{padding:"6px 12px",border:"none",borderBottom:active?"2.5px solid "+getTripColor(t):"2.5px solid transparent",background:"transparent",cursor:"pointer",fontSize:12,fontWeight:active?700:500,color:active?getTripColor(t):done?"#10b981":"#94a3b8",whiteSpace:"nowrap",flexShrink:0}}>
+                    style={{padding:"7px 14px",border:"none",borderBottom:active?"3px solid "+tColor:"3px solid transparent",background:active?tColor+"11":"transparent",cursor:"pointer",fontSize:12,fontWeight:active?700:500,color:active?tColor:done?"#10b981":"#94a3b8",whiteSpace:"nowrap",flexShrink:0,transition:"all .15s"}}>
                     {done?"✓ ":""}V{t}{cnt>0?` (${cnt})`:""}
                   </button>
                 );
@@ -652,7 +655,7 @@ function DriverDetail({driver,stops,clients,products,workDate,depot,onClose,onAd
               const tColor=getTripColor(s.trip_number||1);
               return(
                 <div key={s.id} style={{background:"#fff",borderRadius:10,padding:"10px 12px",marginBottom:8,border:"1px solid #e2e8f0",display:"flex",gap:8,alignItems:"flex-start",opacity:s.status==="entregado"?.55:1}}>
-                  <div style={{width:24,height:24,borderRadius:"50%",background:tColor,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{s.status==="entregado"?"✓":idx+1}</div>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:s.status==="entregado"?"#10b981":tColor,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,marginTop:2}}>{s.status==="entregado"?"✓":idx+1}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3,flexWrap:"wrap"}}>
                       <PTag p={s.priority}/><span style={{fontSize:10,color:"#94a3b8"}}>⏰ {s.time_limit}</span>
