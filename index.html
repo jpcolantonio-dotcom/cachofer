@@ -67,16 +67,46 @@ function buildMapsUrl(stops,clients,depot=null){
   return`https://www.google.com/maps/dir/?api=1${origin}&destination=${pts[pts.length-1]}&waypoints=${pts.slice(0,-1).join("|")}&travelmode=driving`;
 }
 
+// Route cache to avoid re-fetching same routes
+const routeCache = {};
+
 async function getRoute(waypoints){
   if(waypoints.length<2)return null;
-  try{
-    const coords=waypoints.map(p=>p[1]+","+p[0]).join(";");
-    const r=await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(6000)});
-    const d=await r.json();
-    if(d.code==="Ok"&&d.routes&&d.routes.length>0)
-      return d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
-  }catch{}
-  return null;
+  
+  // OSRM max ~25 waypoints per request - split if needed
+  async function fetchSegment(pts){
+    const key = pts.map(p=>p[0].toFixed(4)+","+p[1].toFixed(4)).join("|");
+    if(routeCache[key]) return routeCache[key];
+    try{
+      const coords=pts.map(p=>p[1]+","+p[0]).join(";");
+      const r=await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(8000)});
+      const d=await r.json();
+      if(d.code==="Ok"&&d.routes&&d.routes.length>0){
+        const result=d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+        routeCache[key]=result;
+        return result;
+      }
+    }catch(e){ console.log("OSRM error:",e.message); }
+    return null;
+  }
+
+  // Split into chunks of max 10 waypoints with overlap
+  const MAX=10;
+  if(waypoints.length<=MAX){
+    return fetchSegment(waypoints);
+  }
+  
+  // For longer routes, fetch in segments and join
+  const allCoords=[];
+  for(let i=0;i<waypoints.length-1;i+=MAX-1){
+    const chunk=waypoints.slice(i,Math.min(i+MAX,waypoints.length));
+    if(chunk.length<2)break;
+    const seg=await fetchSegment(chunk);
+    if(!seg)return null; // if any segment fails, fall back
+    if(allCoords.length>0) allCoords.pop(); // remove duplicate junction point
+    allCoords.push(...seg);
+  }
+  return allCoords.length>0?allCoords:null;
 }
 
 function initMap(el,center=[-38.71,-62.27],zoom=13){
@@ -122,7 +152,7 @@ function RouteMap({stops,clients,depot=null,driverColor="#6366f1",driver=null,ac
       if(wpts.length>1){
         getRoute(wpts).then(coords=>{
           if(!mapRef.current)return;
-          L.polyline(coords||wpts,{color:tColor,weight:3,opacity:.75}).addTo(mapRef.current);
+          L.polyline(coords||wpts,{color:tColor,weight:3,opacity:coords?.85:.4,dashArray:coords?null:"8,6"}).addTo(mapRef.current);
         });
       }
     });
@@ -151,8 +181,10 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
 
   function clearLayers(map){layersRef.current.forEach(l=>{try{map.removeLayer(l);}catch{}});layersRef.current=[];}
   const getColor=n=>(tripColors&&tripColors[n-1])||getTripColor(n);
+  const fetchingRef=useRef(false);
 
   function redraw(map){
+    fetchingRef.current=false;
     clearLayers(map);const allPts=[];
     if(depot?.lat&&depot?.lng){
       allPts.push([depot.lat,depot.lng]);
@@ -161,9 +193,10 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
       layersRef.current.push(dm);
     }
 
-    drivers.forEach((dr,di)=>{
+    for(let di=0;di<drivers.length;di++){
+      const dr=drivers[di];
       // Filter by selected drivers (if any selected)
-      if(selectedDrivers.size>0&&!selectedDrivers.has(dr.id))return;
+      if(selectedDrivers.size>0&&!selectedDrivers.has(dr.id))continue;
       const drvColor=dr.color||"#6366f1";
       const dashStyle=DRIVER_DASH[di%DRIVER_DASH.length];
       const drvStops=[...stops.filter(s=>s.driver_id===dr.id&&s.work_date===workDate)].sort((a,b)=>a.route_order-b.route_order);
@@ -194,9 +227,13 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
         if(depot?.lat&&depot?.lng&&routePts.length>1)routePts.push([depot.lat,depot.lng]);
 
         if(routePts.length>1){
+          // Draw straight line first, then replace with OSRM route
+          const tmpLine=L.polyline(routePts,{color:tColor,weight:2,dashArray:"6,5",opacity:.35}).addTo(map);
+          layersRef.current.push(tmpLine);
           getRoute(routePts).then(coords=>{
-            if(!mapRef.current)return;
-            const line=L.polyline(coords||routePts,{color:tColor,weight:3.5,dashArray:dashStyle,opacity:.8}).addTo(mapRef.current);
+            if(!mapRef.current||!coords)return;
+            map.removeLayer(tmpLine);
+            const line=L.polyline(coords,{color:tColor,weight:3.5,dashArray:dashStyle,opacity:.85}).addTo(mapRef.current);
             layersRef.current.push(line);
           });
           // Trip label
@@ -217,7 +254,7 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
           .bindPopup(`<div style="font-family:Inter,sans-serif"><b style="color:${drvColor}">${dr.name}</b><br><span style="color:${fresh?"#10b981":"#f59e0b"};font-size:11px">${fresh?"🟢 En ruta":"🟡 Sin señal"}</span><br><span style="font-size:10px;color:#888">Hace ${min??"-"} min</span></div>`);
         layersRef.current.push(tm);
       }
-    });
+    } // end for drivers
 
     if(allPts.length>0){try{map.fitBounds(allPts,{padding:[48,48],maxZoom:15});}catch{}}
     setLastUp(new Date());
@@ -235,9 +272,20 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
   useEffect(()=>{if(mapRef.current)redraw(mapRef.current);},[stops,drivers,clients,depot,selectedTrip,selectedDrivers]);
 
   useEffect(()=>{
-    const iv=setInterval(async()=>{if(onRefresh)await onRefresh();},tvRefresh*1000);
+    const iv=setInterval(async()=>{
+      if(onRefresh) await onRefresh();
+      // redraw triggered by stops/drivers prop changes from parent
+    },tvRefresh*1000);
     return()=>clearInterval(iv);
   },[tvRefresh]);
+
+  // Also auto-redraw every 5s regardless to catch GPS updates
+  useEffect(()=>{
+    const iv=setInterval(()=>{
+      if(mapRef.current) redraw(mapRef.current);
+    },5000);
+    return()=>clearInterval(iv);
+  },[stops,drivers,selectedTrip,selectedDrivers]);
 
   const fmt=t=>t.toLocaleTimeString("es-AR",{timeZone:"America/Argentina/Buenos_Aires",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 
