@@ -79,7 +79,7 @@ async function getRoute(waypoints){
     if(routeCache[key]) return routeCache[key];
     try{
       const coords=pts.map(p=>p[1]+","+p[0]).join(";");
-      const r=await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(8000)});
+      const r=await fetch("https://router.project-osrm.org/route/v1/driving/"+coords+"?overview=full&geometries=geojson",{signal:AbortSignal.timeout(15000)});
       const d=await r.json();
       if(d.code==="Ok"&&d.routes&&d.routes.length>0){
         const result=d.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
@@ -228,14 +228,21 @@ function TVMap({drivers,stops,clients,depot,workDate,onClose,onRefresh,tvRefresh
 
         if(routePts.length>1){
           // Draw straight line first, then replace with OSRM route
-          const tmpLine=L.polyline(routePts,{color:tColor,weight:2,dashArray:"6,5",opacity:.35}).addTo(map);
+          const tmpLine=L.polyline(routePts,{color:tColor,weight:2,dashArray:"6,5",opacity:.3}).addTo(map);
           layersRef.current.push(tmpLine);
-          getRoute(routePts).then(coords=>{
-            if(!mapRef.current||!coords)return;
-            map.removeLayer(tmpLine);
-            const line=L.polyline(coords,{color:tColor,weight:3.5,dashArray:dashStyle,opacity:.85}).addTo(mapRef.current);
+          // Try OSRM with retries
+          (async()=>{
+            let coords=null;
+            for(let attempt=0;attempt<3;attempt++){
+              coords=await getRoute(routePts);
+              if(coords)break;
+              await new Promise(r=>setTimeout(r,2000*(attempt+1)));
+            }
+            if(!mapRef.current)return;
+            try{map.removeLayer(tmpLine);}catch{}
+            const line=L.polyline(coords||routePts,{color:tColor,weight:3.5,dashArray:coords?dashStyle:"6,5",opacity:coords?.85:.35}).addTo(mapRef.current);
             layersRef.current.push(line);
-          });
+          })();
           // Trip label
           const midIdx=Math.floor(routePts.length/2);
           const lbl=L.divIcon({className:"",html:`<div style="background:${tColor};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;font-family:Inter,sans-serif;white-space:nowrap;box-shadow:0 2px 5px rgba(0,0,0,.3)">${dr.avatar} V${t}</div>`,iconSize:[0,0],iconAnchor:[0,0]});
